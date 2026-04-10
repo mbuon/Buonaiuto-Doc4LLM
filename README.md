@@ -1,180 +1,469 @@
-# Offline Docs Hub
+# Buonaiuto Doc4LLM
 
-This repository contains a local-first prototype for tracking documentation updates for selected technologies and exposing them to an LLM through a minimal MCP-compatible stdio server.
+A local-first documentation retrieval server for AI coding assistants. It fetches official documentation from the web, indexes it locally, and serves it to LLMs through the **Model Context Protocol (MCP)** — giving your AI assistant accurate, version-aware, citation-ready answers instead of hallucinated APIs.
 
-## What it solves
+---
 
-You asked for a service that:
+## Why this exists
 
-- keeps documentation in one central location
-- works without internet access at LLM runtime
-- knows which projects care about which technologies
-- tells the LLM that updated documentation exists
-- lets the LLM read the updated local documentation through MCP
+LLMs are trained on a snapshot of the internet. By the time you use them, the documentation for the libraries you depend on has moved on — new APIs, deprecated patterns, breaking changes. The model does not know.
 
-This prototype does exactly that.
+Buonaiuto Doc4LLM solves this by:
 
-## Important constraint
+- Fetching official documentation from authoritative sources and storing it locally
+- Detecting exactly what changed since the last fetch (added, updated, deleted files)
+- Serving documents to any MCP-compatible AI tool with token-budget enforcement and section-level access
+- Tracking which projects care about which technologies, so the AI only surfaces relevant updates
+- Recording quality feedback per document to surface low-quality or stale content
 
-If the service never accesses the internet, it cannot discover upstream updates by itself. It can only detect updates that have already been copied into the central documentation repository.
+The result is an AI assistant that reads the actual current documentation, not what it was trained on.
 
-That means the architecture has two layers:
+---
 
-1. A sync layer outside the LLM path
-   This can be manual copy, `git pull` from mirrored docs repos, `rsync` from a NAS, or another internal pipeline.
-2. This offline docs hub
-   It scans the local docs mirror, records changes, maps them to projects, and serves them through MCP.
+## How it works
 
-## Repository layout
-
-```text
-docs_center/
-  technologies/
-    react/
-      manifest.json
-      docs/
-        server-components.md
-    python/
-      manifest.json
-      docs/
-        pathlib.md
-    vercel/
-      manifest.json
-      docs/
-        functions.md
-  projects/
-    frontend-app.json
-state/
-src/docs_hub/
-tests/
+```
+Official docs websites
+        │
+        │  HTTP fetch (ETag / If-Modified-Since)
+        ▼
+docs_center/technologies/<tech>/    ← local mirror
+        │
+        │  scan (SHA-256 diff)
+        ▼
+state/buonaiuto_doc4llm.db          ← SQLite: documents, events, projects, feedback
+        │
+        │  MCP / JSON-RPC over stdio
+        ▼
+AI coding assistant (Claude Code, Cursor, Windsurf, …)
 ```
 
-## Core concepts
+There are two layers:
 
-- `technologies/<tech>` stores the local source of truth for a technology.
-- `manifest.json` gives optional metadata like display name and version.
-- `projects/*.json` declares project subscriptions.
-- SQLite stores indexed documents, update events, and project cursors.
-- MCP exposes:
-  - updates for a project
-  - document search
-  - document read
-  - prompt generation for newly updated docs
+1. **Fetch layer** — downloads official docs via HTTP. Runs once on setup, then on a daily schedule or on demand.
+2. **Serve layer** — scans the local mirror, indexes changes, answers MCP tool calls. Works fully offline after the initial fetch.
 
-## Project subscription example
+---
 
-`docs_center/projects/frontend-app.json`
+## Technology stack
+
+| Layer | Technology |
+|---|---|
+| MCP server | Python 3.11+, JSON-RPC 2.0 over stdio (protocol `2025-03-26`) |
+| Storage | SQLite (WAL mode) via `sqlite3` stdlib |
+| Vector search | [Qdrant](https://qdrant.tech/) (optional, local) + sentence-transformers or Ollama embeddings |
+| Lexical search | BM25 with TF-IDF scoring and sqrt length normalization |
+| Web dashboard | [FastAPI](https://fastapi.tiangolo.com/) + [Jinja2](https://jinja.palletsprojects.com/) + [HTMX](https://htmx.org/) |
+| HTTP fetching | `requests` with conditional HTTP (ETag / If-Modified-Since) |
+| Scheduling | macOS `launchd` or Linux `crontab` |
+| Control plane (planned) | PostgreSQL / Supabase, Alembic migrations |
+| Frontend (planned) | Next.js, TypeScript |
+| Observability (planned) | OpenTelemetry |
+
+---
+
+## Supported libraries
+
+Documentation can be fetched and indexed for these libraries out of the box:
+
+| ID | Library |
+|---|---|
+| `nextjs` | Next.js |
+| `react` | React |
+| `vercel-ai-sdk` | Vercel AI SDK |
+| `typescript` | TypeScript |
+| `tailwindcss` | Tailwind CSS |
+| `vite` | Vite |
+| `shadcn-ui` | shadcn/ui |
+| `fastapi` | FastAPI |
+| `pydantic` | Pydantic |
+| `sqlalchemy` | SQLAlchemy |
+| `pytest` | pytest |
+| `langchain` | LangChain |
+| `openai` | OpenAI SDK |
+| `anthropic` | Anthropic SDK |
+| `supabase` | Supabase |
+| `huggingface-transformers` | Hugging Face Transformers |
+| `docker` | Docker |
+| `stripe` | Stripe |
+| `python` | Python standard library |
+
+Any local documentation directory can also be indexed manually — just drop files into `docs_center/technologies/<tech>/`.
+
+---
+
+## MCP tools
+
+| Tool | Description |
+|---|---|
+| `list_supported_libraries` | List all locally indexed libraries with version and freshness info |
+| `search_documentation` | Cross-library search with version-aware filtering and per-library result counts |
+| `search_docs` | Search within a single technology |
+| `read_doc` | Read a document by path, with token budget, query-ranked sections, and TOC |
+| `read_full_page` | Same as `read_doc` with library/version validation |
+| `list_docs` | Browse all indexed documents for a technology |
+| `fetch_docs` | Pull the latest docs from the web and re-index |
+| `install_project` | Auto-detect technologies from a project path and bootstrap the local cache |
+| `scan_docs` | Rescan the local mirror and record change events |
+| `list_project_updates` | List unread documentation changes for a subscribed project |
+| `ack_project_updates` | Mark updates as read (advance the project cursor) |
+| `diff_since` | Show all changes since a given timestamp, with pagination |
+| `submit_feedback` | Record whether a document answered your question (required after reads) |
+| `list_feedback` | Browse quality feedback entries with time and technology filters |
+| `feedback_stats` | Aggregate satisfaction rates and low-quality document detection |
+
+---
+
+## Installation
+
+### Requirements
+
+- Python 3.11 or later
+- `/opt/anaconda3/bin/python` or any Python 3.11+ interpreter
+
+### 1. Clone and install dependencies
+
+```bash
+git clone https://github.com/mbuon/Buonaiuto-Doc4LLM.git
+cd Buonaiuto-Doc4LLM
+
+# Minimal install (MCP server + CLI only)
+pip install -e .
+
+# With web fetching
+pip install -e ".[fetch]"
+
+# With web dashboard
+pip install -e ".[dashboard]"
+
+# With local vector search (sentence-transformers)
+pip install -e ".[embeddings-st,qdrant]"
+
+# Everything
+pip install -e ".[fetch,dashboard,embeddings-st,qdrant]"
+```
+
+### 2. Fetch documentation
+
+```bash
+# Fetch all supported libraries
+PYTHONPATH=src python -m buonaiuto_doc4llm fetch
+
+# Fetch a specific library
+PYTHONPATH=src python -m buonaiuto_doc4llm fetch --technology react
+```
+
+This downloads docs into `docs_center/technologies/` and indexes them into `state/buonaiuto_doc4llm.db`.
+
+### 3. Connect your AI tool
+
+---
+
+#### Claude Code
+
+The repository ships a `.mcp.json` file. Open the folder in Claude Code and the server starts automatically.
+
+To add it manually from the terminal:
+
+```bash
+# Project scope (current project only)
+claude mcp add --scope project buonaiuto-doc4llm \
+  /opt/anaconda3/bin/python \
+  -- -m buonaiuto_doc4llm \
+     --base-dir /path/to/Buonaiuto-Doc4LLM \
+     serve
+
+# Global scope (all your projects)
+claude mcp add --scope user buonaiuto-doc4llm \
+  /opt/anaconda3/bin/python \
+  -- -m buonaiuto_doc4llm \
+     --base-dir /path/to/Buonaiuto-Doc4LLM \
+     serve
+```
+
+---
+
+#### Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
 ```json
 {
-  "project_id": "frontend-app",
-  "name": "Frontend App",
-  "technologies": ["react", "vercel"]
+  "mcpServers": {
+    "buonaiuto-doc4llm": {
+      "command": "/opt/anaconda3/bin/python",
+      "args": [
+        "-m", "buonaiuto_doc4llm",
+        "--base-dir", "/path/to/Buonaiuto-Doc4LLM",
+        "serve"
+      ],
+      "env": {
+        "PYTHONPATH": "/path/to/Buonaiuto-Doc4LLM/src"
+      }
+    }
+  }
 }
 ```
 
-## Technology manifest example
+---
 
-`docs_center/technologies/react/manifest.json`
+#### Cursor
+
+Open **Settings → MCP** and add a new server entry:
 
 ```json
 {
-  "technology": "react",
-  "display_name": "React",
-  "version": "19.2",
-  "description": "Local mirror of React documentation"
+  "buonaiuto-doc4llm": {
+    "command": "/opt/anaconda3/bin/python",
+    "args": [
+      "-m", "buonaiuto_doc4llm",
+      "--base-dir", "/path/to/Buonaiuto-Doc4LLM",
+      "serve"
+    ],
+    "env": {
+      "PYTHONPATH": "/path/to/Buonaiuto-Doc4LLM/src"
+    }
+  }
 }
 ```
 
-## Commands
+---
 
-Use `PYTHONPATH=src` when running locally without installing the package.
+#### Windsurf
 
-### Scan the docs center
+Edit `~/.codeium/windsurf/mcp_config.json`:
 
-```bash
-PYTHONPATH=src python3 -m docs_hub scan
+```json
+{
+  "mcpServers": {
+    "buonaiuto-doc4llm": {
+      "command": "/opt/anaconda3/bin/python",
+      "args": [
+        "-m", "buonaiuto_doc4llm",
+        "--base-dir", "/path/to/Buonaiuto-Doc4LLM",
+        "serve"
+      ],
+      "env": {
+        "PYTHONPATH": "/path/to/Buonaiuto-Doc4LLM/src"
+      }
+    }
+  }
+}
 ```
 
-### List updates for a project
+---
 
-```bash
-PYTHONPATH=src python3 -m docs_hub updates frontend-app
+#### Zed
+
+In your Zed `settings.json`:
+
+```json
+{
+  "context_servers": {
+    "buonaiuto-doc4llm": {
+      "command": {
+        "path": "/opt/anaconda3/bin/python",
+        "args": [
+          "-m", "buonaiuto_doc4llm",
+          "--base-dir", "/path/to/Buonaiuto-Doc4LLM",
+          "serve"
+        ],
+        "env": {
+          "PYTHONPATH": "/path/to/Buonaiuto-Doc4LLM/src"
+        }
+      }
+    }
+  }
+}
 ```
 
-### Acknowledge updates for a project
+---
 
-```bash
-PYTHONPATH=src python3 -m docs_hub ack frontend-app
+#### OpenAI Codex CLI
+
+Point Codex at the `.mcp.json` in the repo root, or add to your Codex config:
+
+```json
+{
+  "mcpServers": {
+    "buonaiuto-doc4llm": {
+      "command": "/opt/anaconda3/bin/python",
+      "args": [
+        "-m", "buonaiuto_doc4llm",
+        "--base-dir", "/path/to/Buonaiuto-Doc4LLM",
+        "serve"
+      ],
+      "env": {
+        "PYTHONPATH": "/path/to/Buonaiuto-Doc4LLM/src"
+      }
+    }
+  }
+}
 ```
 
-### Search local docs
+---
 
-```bash
-PYTHONPATH=src python3 -m docs_hub search react server
+#### Cline (VS Code extension)
+
+In VS Code settings, under Cline → MCP Servers, add:
+
+```json
+{
+  "buonaiuto-doc4llm": {
+    "command": "/opt/anaconda3/bin/python",
+    "args": [
+      "-m", "buonaiuto_doc4llm",
+      "--base-dir", "/path/to/Buonaiuto-Doc4LLM",
+      "serve"
+    ],
+    "env": {
+      "PYTHONPATH": "/path/to/Buonaiuto-Doc4LLM/src"
+    }
+  }
+}
 ```
 
-### Read a local doc
+---
 
-```bash
-PYTHONPATH=src python3 -m docs_hub read-doc react docs/server-components.md
+#### Continue (VS Code / JetBrains extension)
+
+In your `~/.continue/config.json`:
+
+```json
+{
+  "mcpServers": [
+    {
+      "name": "buonaiuto-doc4llm",
+      "command": "/opt/anaconda3/bin/python",
+      "args": [
+        "-m", "buonaiuto_doc4llm",
+        "--base-dir", "/path/to/Buonaiuto-Doc4LLM",
+        "serve"
+      ],
+      "env": {
+        "PYTHONPATH": "/path/to/Buonaiuto-Doc4LLM/src"
+      }
+    }
+  ]
+}
 ```
 
-### Watch the central docs folder for changes
+---
+
+#### Any MCP-compatible client
+
+The server speaks JSON-RPC 2.0 over `stdin`/`stdout`. Launch it with:
 
 ```bash
-PYTHONPATH=src python3 -m docs_hub watch
+PYTHONPATH=/path/to/Buonaiuto-Doc4LLM/src \
+  /opt/anaconda3/bin/python -m buonaiuto_doc4llm \
+  --base-dir /path/to/Buonaiuto-Doc4LLM \
+  serve
 ```
 
-### Run the MCP server over stdio
+**Key rule:** `--base-dir` must always come *before* the `serve` subcommand.
+
+---
+
+## CLI reference
 
 ```bash
-PYTHONPATH=src python3 -m docs_hub serve
+# Fetch documentation from the web
+PYTHONPATH=src python -m buonaiuto_doc4llm fetch
+PYTHONPATH=src python -m buonaiuto_doc4llm fetch --technology react
+PYTHONPATH=src python -m buonaiuto_doc4llm fetch --interval 3600   # repeat every hour
+
+# Scan the local mirror for changes
+PYTHONPATH=src python -m buonaiuto_doc4llm scan
+
+# Watch the local mirror and rescan on change (0.75 s debounce)
+PYTHONPATH=src python -m buonaiuto_doc4llm watch
+
+# Watch + periodic fetch combined
+PYTHONPATH=src python -m buonaiuto_doc4llm watch-and-fetch --interval 86400
+
+# Search indexed docs
+PYTHONPATH=src python -m buonaiuto_doc4llm search react hooks
+PYTHONPATH=src python -m buonaiuto_doc4llm search fastapi dependency injection
+
+# Read a document
+PYTHONPATH=src python -m buonaiuto_doc4llm read-doc react llms.txt
+
+# List unread updates for a project
+PYTHONPATH=src python -m buonaiuto_doc4llm updates my-project
+
+# Acknowledge updates
+PYTHONPATH=src python -m buonaiuto_doc4llm ack my-project
+
+# Install a project (auto-detect technologies)
+PYTHONPATH=src python -m buonaiuto_doc4llm install-project /path/to/my-project
+
+# Schedule daily automatic fetch (macOS launchd / Linux crontab)
+PYTHONPATH=src python -m buonaiuto_doc4llm schedule install           # 04:00 default
+PYTHONPATH=src python -m buonaiuto_doc4llm schedule install --hour 2 --minute 30
+PYTHONPATH=src python -m buonaiuto_doc4llm schedule status
+PYTHONPATH=src python -m buonaiuto_doc4llm schedule uninstall
+
+# Start the web dashboard (http://127.0.0.1:8420)
+PYTHONPATH=src python -m buonaiuto_doc4llm dashboard
+
+# Start the MCP server
+PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve
 ```
 
-## MCP surface
+---
 
-The server implements a minimal JSON-RPC/MCP-style interface over stdio with:
+## Project subscriptions
 
-- `tools/list`
-- `tools/call`
-- `resources/list`
-- `resources/read`
-- `prompts/list`
-- `prompts/get`
+Create `docs_center/projects/my-app.json` to define which technologies a project tracks:
 
-Key tools:
+```json
+{
+  "project_id": "my-app",
+  "name": "My App",
+  "technologies": ["react", "nextjs", "stripe"]
+}
+```
 
-- `scan_docs`
-- `list_project_updates`
-- `ack_project_updates`
-- `read_doc`
-- `search_docs`
+The `list_project_updates` and `ack_project_updates` tools use this to surface only relevant changes to each project.
 
-Key prompt:
+---
 
-- `documentation_updates_summary`
+## Web dashboard
 
-It generates a prompt telling the model which local documentation changed and which local document URIs should be read.
+Start the built-in dashboard to browse indexed docs, run queries, inspect feedback stats, and manage the fetch schedule:
 
-## How this fits a production setup
+```bash
+PYTHONPATH=src python -m buonaiuto_doc4llm dashboard
+# Opens at http://127.0.0.1:8420
+```
 
-Recommended production split:
+Requires the `dashboard` extra: `pip install -e ".[dashboard]"`.
 
-1. Sync job
-   Mirrors official docs into `docs_center/technologies/...`.
-2. Indexer
-   Runs `scan` on a timer or via file watcher.
-3. MCP server
-   Reads the indexed state and serves tools/resources/prompts to the LLM.
-4. Project policy
-   Each project subscribes to technologies directly or from its dependency manifest.
+---
 
-## Next extensions
+## Running the tests
 
-- infer project technologies from `package.json`, `pyproject.toml`, or lockfiles
-- chunk and embed documents for semantic search
-- record section-level diffs instead of file-level diffs
-- add a sync adapter for internal mirrored documentation sources
-- expose approval rules, severity levels, and “must-read” updates
+```bash
+pytest                        # all 269 tests
+pytest tests/test_service.py  # single file
+pytest -k test_search         # filter by name
+pytest --tb=short -q          # compact output
+```
 
+No database mocking — tests use real SQLite instances via `tmp_path`.
+
+---
+
+## Roadmap
+
+| Current | Planned |
+|---|---|
+| SQLite | PostgreSQL / Supabase |
+| Lexical BM25 search | Hybrid BM25 + dense Qdrant retrieval + cross-encoder reranking |
+| stdio MCP | Streamable HTTP MCP transport |
+| Local fetch schedule | Ingestion worker with source trust scoring |
+| Project JSON files | Workspace subscriptions with API key auth |
+| Python CLI | Full SaaS control plane |
+
+**Phase 1 target:** MRR@10 ≥ 0.70 on the seed library benchmark set.

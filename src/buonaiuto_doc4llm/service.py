@@ -1418,6 +1418,8 @@ class DocsHubService:
         project_id: str | None = None,
         seed_technologies_root: Path | str | None = None,
     ) -> dict[str, Any]:
+        from .auto_setup import ingest_local_llms_files
+
         install_summary = bootstrap_project(
             base_dir=self.base_dir,
             project_root=project_root,
@@ -1425,11 +1427,19 @@ class DocsHubService:
             seed_technologies_root=seed_technologies_root,
         )
 
-        # Fetch latest docs from the web for all detected technologies.
+        # Step 1 — ingest any llms.txt / llms-full.txt files found locally in
+        # the project tree.  These are available immediately without any HTTP
+        # requests and do not count against the web-fetch quota.
+        local_result = ingest_local_llms_files(project_root, self.base_dir)
+        locally_satisfied: set[str] = set(local_result["ingested"])
+
+        # Step 2 — fetch from the web for all remaining detected technologies
+        # that were NOT satisfied by a local file.
         detected = install_summary.get("technologies_detected", [])
+        needs_fetch = [t for t in detected if t not in locally_satisfied]
         fetched: list[dict[str, Any]] = []
         fetch_errors: list[dict[str, str]] = []
-        if detected:
+        if needs_fetch:
             from ingestion.http_fetcher import HttpDocFetcher
             from ingestion.registry_loader import default_registry_path, load_registry
 
@@ -1439,12 +1449,14 @@ class DocsHubService:
                 db_path=self.db_path,
                 registry=mappings,
             )
-            for tech in detected:
+            for tech in needs_fetch:
                 try:
                     fetched.append(fetcher.fetch(tech))
                 except (ValueError, RuntimeError) as exc:
                     fetch_errors.append({"technology": tech, "error": str(exc)})
 
+        install_summary["local_ingested"] = sorted(locally_satisfied)
+        install_summary["local_ingest_errors"] = local_result["errors"]
         install_summary["fetch_results"] = fetched
         install_summary["fetch_errors"] = fetch_errors
         install_summary["scan_summary"] = self.scan()

@@ -167,6 +167,87 @@ def test_install_project_reports_fetch_errors_gracefully(
     assert summary["scan_summary"] is not None
 
 
+# ---------------------------------------------------------------------------
+# Local llms.txt ingestion
+# ---------------------------------------------------------------------------
+
+def test_detect_from_local_llms_txt_root_level(tmp_path: Path) -> None:
+    """llms.txt at project root is detected as a technology."""
+    from buonaiuto_doc4llm.auto_setup import _detect_from_local_llms_txt
+    project_root = tmp_path / "myproject"
+    _write(project_root / "llms.txt", "# My Lib\n\nDocs here.")
+    found = _detect_from_local_llms_txt(project_root)
+    assert "myproject" in found
+
+
+def test_detect_from_local_llms_txt_subdir(tmp_path: Path) -> None:
+    """llms-full.txt inside a named subdirectory uses the dir name as tech ID."""
+    from buonaiuto_doc4llm.auto_setup import _detect_from_local_llms_txt
+    project_root = tmp_path / "myproject"
+    _write(project_root / "docs" / "mylibrary" / "llms-full.txt", "# MyLibrary\n\nContent.")
+    found = _detect_from_local_llms_txt(project_root)
+    assert "mylibrary" in found
+
+
+def test_detect_from_local_llms_txt_multiple(tmp_path: Path) -> None:
+    """Multiple llms.txt files in different subdirs all detected."""
+    from buonaiuto_doc4llm.auto_setup import _detect_from_local_llms_txt
+    project_root = tmp_path / "myproject"
+    _write(project_root / "vendor" / "alpha" / "llms.txt", "# Alpha")
+    _write(project_root / "vendor" / "beta" / "llms-full.txt", "# Beta")
+    found = _detect_from_local_llms_txt(project_root)
+    assert "alpha" in found
+    assert "beta" in found
+
+
+def test_ingest_local_llms_files_copies_to_docs_center(tmp_path: Path) -> None:
+    """ingest_local_llms_files copies llms.txt content into docs_center."""
+    from buonaiuto_doc4llm.auto_setup import ingest_local_llms_files
+    project_root = tmp_path / "myproject"
+    base_dir = tmp_path / "base"
+    content = "# MyLib\n\nSome documentation."
+    _write(project_root / "docs" / "mylib" / "llms-full.txt", content)
+
+    result = ingest_local_llms_files(project_root, base_dir)
+
+    dest = base_dir / "docs_center" / "technologies" / "mylib" / "llms-full.txt"
+    assert dest.exists()
+    assert dest.read_text(encoding="utf-8") == content
+    assert "mylib" in result["ingested"]
+
+
+def test_install_project_uses_local_llms_txt_without_web_fetch(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """install_project ingests local llms.txt and skips web fetch for that tech."""
+    base_dir = tmp_path / "base"
+    project_root = tmp_path / "myproject"
+
+    # Project has a local llms.txt — no package.json reference needed
+    _write(project_root / "docs" / "myinternal" / "llms.txt", "# Internal Docs\n\nContent.")
+
+    fetched_techs: list[str] = []
+
+    def fake_fetch(self, technology: str):
+        fetched_techs.append(technology)
+        return {"fetched": True, "technology": technology}
+
+    monkeypatch.setattr("ingestion.http_fetcher.HttpDocFetcher.fetch", fake_fetch)
+
+    service = DocsHubService(base_dir)
+    summary = service.install_project(project_root=project_root, project_id="myproject")
+
+    # Local tech is in scan results
+    libs = [lib["library_id"] for lib in service.list_supported_libraries()]
+    assert "myinternal" in libs
+
+    # Web fetch was NOT called for the locally-provided tech
+    assert "myinternal" not in fetched_techs
+
+    # Reported in local_ingested, not fetch_results
+    assert "myinternal" in summary.get("local_ingested", [])
+
+
 def test_mcp_server_install_project_tool_bootstraps_project(tmp_path: Path) -> None:
     base_dir = tmp_path / "base"
     project_root = tmp_path / "myproject"

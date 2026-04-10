@@ -66,7 +66,87 @@ def detect_project_technologies(project_root: Path | str) -> list[str]:
     technologies.update(_detect_from_pyproject(root))
     technologies.update(_detect_from_file_hints(root))
     technologies.update(_detect_from_docs_center(root))
+    technologies.update(_detect_from_local_llms_txt(root))
     return sorted(technologies)
+
+
+def _detect_from_local_llms_txt(root: Path) -> list[str]:
+    """Detect technologies from llms.txt / llms-full.txt files in the project tree.
+
+    Rules:
+    - A file named ``llms.txt`` or ``llms-full.txt`` directly at *root* gets the
+      technology ID ``root.name`` (the project folder name).
+    - The same files found inside a subdirectory (any depth) get the technology ID
+      equal to their **immediate parent directory name**.  This allows structures like
+      ``docs/django/llms-full.txt`` → technology ``django``.
+    """
+    found: dict[str, Path] = {}  # tech_id -> best file (llms-full.txt preferred)
+    llms_names = {"llms-full.txt", "llms.txt"}
+
+    for candidate in root.rglob("llms*.txt"):
+        if candidate.name not in llms_names:
+            continue
+        # Determine technology ID
+        if candidate.parent == root:
+            tech_id = root.name.lower()
+        else:
+            tech_id = candidate.parent.name.lower()
+
+        tech_id = re.sub(r"[^a-z0-9_-]", "-", tech_id).strip("-")
+        if not tech_id:
+            continue
+
+        # Prefer llms-full.txt over llms.txt
+        existing = found.get(tech_id)
+        if existing is None or candidate.name == "llms-full.txt":
+            found[tech_id] = candidate
+
+    return sorted(found.keys())
+
+
+def ingest_local_llms_files(
+    project_root: Path | str,
+    base_dir: Path | str,
+) -> dict[str, Any]:
+    """Copy llms.txt / llms-full.txt files found in *project_root* into the
+    local docs center at ``base_dir/docs_center/technologies/<tech_id>/``.
+
+    Returns a dict with:
+      - ``ingested``: list of technology IDs successfully copied
+      - ``errors``: list of ``{"technology": ..., "error": ...}`` dicts
+    """
+    root = Path(project_root)
+    base = Path(base_dir)
+    llms_names = {"llms-full.txt", "llms.txt"}
+
+    # Build same mapping as _detect_from_local_llms_txt (prefer llms-full.txt)
+    best: dict[str, Path] = {}
+    for candidate in root.rglob("llms*.txt"):
+        if candidate.name not in llms_names:
+            continue
+        tech_id = root.name.lower() if candidate.parent == root else candidate.parent.name.lower()
+        tech_id = re.sub(r"[^a-z0-9_-]", "-", tech_id).strip("-")
+        if not tech_id:
+            continue
+        existing = best.get(tech_id)
+        if existing is None or candidate.name == "llms-full.txt":
+            best[tech_id] = candidate
+
+    ingested: list[str] = []
+    errors: list[dict[str, str]] = []
+    tech_root = base / "docs_center" / "technologies"
+
+    for tech_id, src_file in best.items():
+        try:
+            dest_dir = tech_root / tech_id
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_file = dest_dir / src_file.name
+            shutil.copy2(src_file, dest_file)
+            ingested.append(tech_id)
+        except Exception as exc:
+            errors.append({"technology": tech_id, "error": str(exc)})
+
+    return {"ingested": ingested, "errors": errors}
 
 
 def _detect_from_docs_center(root: Path) -> list[str]:

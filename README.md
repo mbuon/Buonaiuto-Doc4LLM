@@ -11,6 +11,7 @@ LLMs are trained on a snapshot of the internet. By the time you use them, the do
 Buonaiuto Doc4LLM solves this by:
 
 - **Auto-detecting your project's technologies** from `package.json`, `pyproject.toml`, `requirements.txt`, and other manifests — no manual configuration needed
+- **Ingesting local documentation instantly** — if your project already contains `llms.txt` or `llms-full.txt` files anywhere in the directory tree, they are copied directly into the index without any HTTP requests
 - **Fetching the missing documentation automatically** the first time it sees a library, then keeping it fresh on a daily schedule
 - **Auto-discovering unknown libraries** — if a library isn't in the built-in registry, the server finds its official docs site, downloads them, and remembers the source for next time
 - Detecting exactly what changed since the last fetch (added, updated, deleted files)
@@ -25,32 +26,35 @@ The result is an AI assistant that reads the actual current documentation, not w
 ## How it works
 
 ```
-Your project (package.json, pyproject.toml, …)
+Your project (package.json, pyproject.toml, llms.txt, …)
         │
         │  install_project / MCP initialize
-        │  → detect technologies
-        │  → fetch missing docs automatically
-        │  → auto-discover unknown libraries
+        │  1. detect technologies from manifests
+        │  2. copy local llms.txt files instantly (no HTTP)
+        │  3. fetch remaining docs from the web
+        │  4. auto-discover unknown libraries
         ▼
-Official docs websites
-        │
-        │  HTTP fetch (ETag / If-Modified-Since)
-        │  + linked page downloading
-        ▼
-docs_center/technologies/<tech>/    ← local mirror
-        │
-        │  scan (SHA-256 diff)
-        ▼
-state/buonaiuto_doc4llm.db          ← SQLite: documents, events, projects, feedback
-        │
-        │  MCP / JSON-RPC over stdio
-        ▼
-AI coding assistant (Claude Code, Cursor, Windsurf, …)
+Official docs websites          Local llms.txt files
+        │                               │
+        │  HTTP fetch                   │  direct copy
+        │  (ETag / If-Modified-Since)   │  (no network needed)
+        │  + linked page downloading    │
+        └───────────────┬───────────────┘
+                        ▼
+        docs_center/technologies/<tech>/    ← local mirror
+                        │
+                        │  scan (SHA-256 diff)
+                        ▼
+        state/buonaiuto_doc4llm.db          ← SQLite: documents, events, projects, feedback
+                        │
+                        │  MCP / JSON-RPC over stdio
+                        ▼
+        AI coding assistant (Claude Code, Cursor, Windsurf, …)
 ```
 
 There are two layers:
 
-1. **Fetch layer** — on first use, auto-detects your project's libraries and downloads their docs. Subsequently keeps them fresh on a daily schedule or on demand. Works for any library — unknown ones are discovered automatically.
+1. **Fetch layer** — on first use, auto-detects your project's libraries. Any `llms.txt` / `llms-full.txt` files already present in the project are copied immediately without HTTP requests. Remaining libraries are fetched from the web and kept fresh on a daily schedule. Unknown libraries are discovered automatically.
 2. **Serve layer** — scans the local mirror, indexes changes, answers MCP tool calls. Works fully offline after the initial fetch.
 
 ---
@@ -134,9 +138,35 @@ Examples already in the registry:
 
 To add any GitHub-hosted documentation, add an entry to `src/ingestion/registry.json` following the same format.
 
-### Local files
+### Local llms.txt files (automatic, no HTTP)
 
-Any directory of documentation files can be indexed without fetching from the web at all. Drop `.md`, `.mdx`, `.txt`, `.rst`, or `.json` files into `docs_center/technologies/<tech>/` and run:
+If your project already contains `llms.txt` or `llms-full.txt` files anywhere in the directory tree, they are detected and copied into the index automatically when you run `install_project` — no HTTP requests needed.
+
+**Detection rules:**
+
+- `llms.txt` or `llms-full.txt` at the **project root** → technology ID = project folder name
+- Same files inside a **subdirectory** (any depth) → technology ID = immediate parent directory name
+
+```
+myproject/
+├── llms.txt                         → technology: "myproject"
+├── docs/
+│   ├── django/
+│   │   └── llms-full.txt            → technology: "django"
+│   └── celery/
+│       └── llms.txt                 → technology: "celery"
+└── vendor/
+    └── internal-api/
+        └── llms-full.txt            → technology: "internal-api"
+```
+
+`llms-full.txt` takes priority over `llms.txt` when both exist in the same directory.
+
+Technologies satisfied by local files are **skipped during web fetch** — the server never makes unnecessary HTTP requests for docs it already has.
+
+### Any local documentation files
+
+Drop `.md`, `.mdx`, `.txt`, `.rst`, or `.json` files directly into `docs_center/technologies/<tech>/` and run:
 
 ```bash
 python -m buonaiuto_doc4llm scan
@@ -481,13 +511,15 @@ The most powerful feature: point the server at your project and it figures out e
 
 When you run `install_project` (CLI or MCP tool), or when an MCP client opens a workspace, the server:
 
-1. **Detects technologies** — reads `package.json`, `pyproject.toml`, `requirements.txt`, `Pipfile`, `go.mod`, and other manifests from the project path. Maps package names to library IDs via the built-in registry (e.g. `"ai"` or `"@ai-sdk/*"` → `vercel-ai-sdk`, `"fastapi"` → `fastapi`).
+1. **Detects technologies** — reads `package.json`, `pyproject.toml`, `requirements.txt`, `Pipfile`, `go.mod`, and other manifests. Also scans the entire project tree for `llms.txt` / `llms-full.txt` files. Maps package names to library IDs via the built-in registry (e.g. `"ai"` or `"@ai-sdk/*"` → `vercel-ai-sdk`, `"fastapi"` → `fastapi`).
 
-2. **Fetches missing documentation** — for each detected technology not yet in the local cache, downloads official docs from the authoritative source (e.g. `https://react.dev/llms-full.txt`). Uses conditional HTTP (ETag / If-Modified-Since) — sources that haven't changed are skipped.
+2. **Ingests local docs instantly** — any `llms.txt` or `llms-full.txt` files found in the project tree are copied directly into `docs_center/technologies/<tech>/` with no HTTP requests. These technologies are immediately searchable.
 
-3. **Indexes everything** — SHA-256 diffs the new files and writes `added` events to SQLite so the AI immediately knows what's new.
+3. **Fetches remaining docs from the web** — technologies not satisfied by a local file are downloaded from official sources (e.g. `https://react.dev/llms-full.txt`). Uses conditional HTTP (ETag / If-Modified-Since) — unchanged sources are skipped.
 
-4. **Creates the project subscription** — writes `docs_center/projects/<id>.json` with the detected technology list. Future `list_project_updates` calls use this to surface only relevant changes.
+4. **Indexes everything** — SHA-256 diffs the new files and writes `added` events to SQLite so the AI immediately knows what's new.
+
+5. **Creates the project subscription** — writes `docs_center/projects/<id>.json` with the detected technology list. Future `list_project_updates` calls use this to surface only relevant changes.
 
 ### CLI
 
@@ -552,25 +584,72 @@ The `list_project_updates` and `ack_project_updates` tools use this to surface o
 
 ## Web dashboard
 
-Browse indexed docs, run queries, inspect feedback stats, and manage the fetch schedule at `http://127.0.0.1:8420`.
+A full web interface for managing every aspect of the server. Built with FastAPI + Jinja2 + HTMX — real-time actions without page reloads.
 
-**Standalone** (dashboard only):
+**Start standalone:**
 
 ```bash
 PYTHONPATH=src python -m buonaiuto_doc4llm dashboard
+# Opens at http://127.0.0.1:8420
 ```
 
-**Together with the MCP server** (single command, background thread):
+**Start alongside the MCP server (single command):**
 
 ```bash
 PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve --dashboard
 ```
 
-The `--dashboard` flag starts uvicorn in a daemon thread. The MCP server continues to run on stdio unaffected. The dashboard URL is printed to stderr on startup.
-
 Custom address: `serve --dashboard --dashboard-host 0.0.0.0 --dashboard-port 9000`
 
-Requires the `dashboard` extra: `pip install -e ".[dashboard]"`.
+Requires: `pip install -e ".[dashboard]"`
+
+### Pages
+
+#### Overview `/`
+- Total document count, technology count, project count, event count
+- List of all indexed libraries with version and document count
+- Last 10 activity events
+- Scheduler status (active / inactive)
+
+#### Technologies `/technologies`
+- All indexed libraries with document count, last scan date, last fetch date, and status
+- Full registry of supported libraries (all 19 built-in entries)
+- **Scan** button — rescan the local mirror immediately
+- **Fetch All** button — download fresh docs from the web for all libraries (streamed progress)
+- **Fetch** button per library — fetch a single library on demand
+- **Index** button per library — build vector embeddings for Qdrant search
+
+#### Query `/query`
+- Full-text search across all indexed documentation
+- Filter by technology
+- Inline document viewer — read the full content of any result without leaving the page
+- Shows whether vector search (Qdrant) or lexical search (BM25) is active
+- Displays indexed vector count when Qdrant is available
+
+#### Documents `/documents`
+- Browse every indexed document across all technologies
+- Filter by technology or search by path/content
+- Click any document to read it inline
+- Shows file size for each document
+
+#### Projects `/projects`
+- All registered projects with their technology subscriptions
+- Unread update count per project
+- **Install Project** form — enter a project path to auto-detect technologies and bootstrap docs
+- **Acknowledge** button — mark all updates as read for a project
+
+#### Activity `/activity`
+- Full timeline of all documentation change events (added, updated, deleted)
+- Filter by technology or event type
+- Shows timestamp, technology, relative path, and event type for each entry
+
+#### Fetch & Schedule `/schedule`
+- **Install schedule** — set up a daily automatic fetch via macOS launchd or Linux crontab
+- Configure hour and minute for the daily run (default: 04:00)
+- **Uninstall schedule** — remove the cron job
+- Current schedule status
+- Fetch state table — ETag, Last-Modified, and last fetch timestamp per technology
+- Manual **Scan** and **Fetch All** buttons
 
 ---
 

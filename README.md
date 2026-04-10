@@ -74,31 +74,75 @@ There are two layers:
 
 ## Supported libraries
 
-Documentation can be fetched and indexed for these libraries out of the box:
+There are four ways to get documentation into the server — from a built-in registry, from any site that publishes `llms.txt`, from GitHub, or from your own local files.
 
-| ID | Library |
-|---|---|
-| `nextjs` | Next.js |
-| `react` | React |
-| `vercel-ai-sdk` | Vercel AI SDK |
-| `typescript` | TypeScript |
-| `tailwindcss` | Tailwind CSS |
-| `vite` | Vite |
-| `shadcn-ui` | shadcn/ui |
-| `fastapi` | FastAPI |
-| `pydantic` | Pydantic |
-| `sqlalchemy` | SQLAlchemy |
-| `pytest` | pytest |
-| `langchain` | LangChain |
-| `openai` | OpenAI SDK |
-| `anthropic` | Anthropic SDK |
-| `supabase` | Supabase |
-| `huggingface-transformers` | Hugging Face Transformers |
-| `docker` | Docker |
-| `stripe` | Stripe |
-| `python` | Python standard library |
+### Built-in registry (19 libraries, zero configuration)
 
-Any local documentation directory can also be indexed manually — just drop files into `docs_center/technologies/<tech>/`.
+These are fetched automatically when your project uses them:
+
+| ID | Library | Source |
+|---|---|---|
+| `nextjs` | Next.js | nextjs.org/llms-full.txt |
+| `react` | React | react.dev/llms-full.txt |
+| `vercel-ai-sdk` | Vercel AI SDK | ai-sdk.dev/llms-full.txt |
+| `typescript` | TypeScript | typescriptlang.org/llms-full.txt |
+| `tailwindcss` | Tailwind CSS | tailwindcss.com/llms-full.txt |
+| `vite` | Vite | vite.dev/llms-full.txt |
+| `shadcn-ui` | shadcn/ui | ui.shadcn.com/llms-full.txt |
+| `fastapi` | FastAPI | fastapi.tiangolo.com/llms-full.txt |
+| `pydantic` | Pydantic | docs.pydantic.dev/llms-full.txt |
+| `sqlalchemy` | SQLAlchemy | docs.sqlalchemy.org/llms-full.txt |
+| `pytest` | pytest | docs.pytest.org/llms-full.txt |
+| `langchain` | LangChain | python.langchain.com/llms-full.txt |
+| `openai` | OpenAI SDK | platform.openai.com/docs/llms-full.txt |
+| `anthropic` | Anthropic SDK | docs.anthropic.com/llms-full.txt |
+| `supabase` | Supabase | supabase.com/llms-full.txt |
+| `huggingface-transformers` | Hugging Face Transformers | huggingface.co/docs/transformers/llms-full.txt |
+| `docker` | Docker | docs.docker.com/llms-full.txt |
+| `stripe` | Stripe | docs.stripe.com/llms-full.txt |
+| `python` | Python stdlib | docs.python.org/3/llms-full.txt |
+
+Each entry tries `llms-full.txt` first (complete docs), falls back to `llms.txt` (index), then GitHub source as a last resort.
+
+### Any library with an llms.txt endpoint
+
+The `llms.txt` standard is being adopted rapidly across the developer ecosystem. If a library's documentation site publishes an `llms.txt` or `llms-full.txt` file, you can fetch it directly:
+
+```bash
+# Fetch by explicit URL — any library, anywhere on the web
+python -m buonaiuto_doc4llm fetch --technology django
+```
+
+If `django` isn't in the registry, the server searches for its official docs site, probes for `llms-full.txt` / `llms.txt`, downloads the content, and saves the source to `registry.json` for next time. No manual configuration needed.
+
+Libraries with known `llms.txt` support include (but are not limited to): Django, Flask, Astro, SvelteKit, Nuxt, Vue, Angular, Remix, Prisma, Drizzle, tRPC, Zod, Axios, Lodash, Express, NestJS, Hono, Starlette, Celery, Redis, Elasticsearch, and hundreds more as adoption grows.
+
+### GitHub source
+
+For libraries whose docs live in a GitHub repository rather than a website, the registry supports `github://` sources:
+
+```
+github://owner/repo/branch/path/to/docs
+```
+
+Examples already in the registry:
+- `github://microsoft/TypeScript-Website/v2/packages/documentation/copy/en`
+- `github://fastapi/fastapi/master/docs/en/docs`
+- `github://pytest-dev/pytest/main/doc/en`
+- `github://python/cpython/main/Doc`
+- `github://tailwindlabs/tailwindcss.com/main/src/docs`
+
+To add any GitHub-hosted documentation, add an entry to `src/ingestion/registry.json` following the same format.
+
+### Local files
+
+Any directory of documentation files can be indexed without fetching from the web at all. Drop `.md`, `.mdx`, `.txt`, `.rst`, or `.json` files into `docs_center/technologies/<tech>/` and run:
+
+```bash
+python -m buonaiuto_doc4llm scan
+```
+
+This works for internal documentation, private libraries, API specs, architecture docs, or any content you want your AI to have access to.
 
 ---
 

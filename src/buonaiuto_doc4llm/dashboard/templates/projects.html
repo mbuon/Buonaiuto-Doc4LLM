@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Buonaiuto Doc4LLM &middot; Projects{% endblock %}
+
+{% block flash %}
+{% if flash_msg %}
+<div class="flash flash-{{ flash_type or 'info' }}"><span class="flash-msg">{{ flash_msg }}</span><button class="flash-close" onclick="this.parentElement.remove()">&times;</button></div>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-title">Projects</div>
+  <div class="page-subtitle">Registered projects and their technology subscriptions</div>
+</div>
+
+<div class="card mb-16">
+  <div class="card-header">
+    <span class="card-title">Install Project</span>
+  </div>
+  <div class="card-body">
+    <form hx-post="/api/install-project" hx-target="#flash-container" hx-swap="innerHTML"
+          style="display: flex; gap: 8px; align-items: center;">
+      <input type="text" name="project_path" class="input" style="flex: 1;"
+             placeholder="/path/to/your/project" required>
+      <input type="text" name="project_id" class="input" style="width: 180px;"
+             placeholder="project-id (optional)">
+      <button type="submit" class="btn btn-primary">
+        <span class="htmx-indicator spinner"></span>
+        Install
+      </button>
+    </form>
+  </div>
+</div>
+
+{% for project in projects %}
+<div class="card">
+  <div class="card-header">
+    <div>
+      <span class="card-title text-green">{{ project.project_id }}</span>
+      {% if project.name and project.name != project.project_id %}
+      <span class="text-secondary" style="margin-left: 8px;">{{ project.name }}</span>
+      {% endif %}
+    </div>
+    <div style="display: flex; gap: 8px; align-items: center;">
+      {% if project.unread_count > 0 %}
+      <span class="badge badge-amber">{{ project.unread_count }} unread</span>
+      <button class="btn btn-sm"
+              hx-post="/api/ack?project_id={{ project.project_id | urlencode }}"
+              hx-target="#flash-container"
+              hx-swap="innerHTML">
+        Acknowledge
+      </button>
+      {% else %}
+      <span class="badge badge-muted">up to date</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="form-label">Subscribed Technologies</div>
+    <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px;">
+      {% for tech in project.technologies %}
+      <a href="/documents?technology={{ tech }}" class="badge badge-blue">{{ tech }}</a>
+      {% endfor %}
+      {% if not project.technologies %}
+      <span class="text-muted">No technologies subscribed</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+{% if not projects %}
+<div class="card">
+  <div class="card-body">
+    <div class="empty-state">
+      <div class="icon">&#9733;</div>
+      <div class="msg">No projects registered. Install a project to get started.</div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Buonaiuto Doc4LLM &middot; Overview{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-title">Overview</div>
+  <div class="page-subtitle">Documentation hub status at a glance</div>
+</div>
+
+<div class="stats-row">
+  <div class="stat-card">
+    <div class="stat-label">Technologies</div>
+    <div class="stat-value green">{{ tech_count }}</div>
+    <div class="stat-sub">indexed libraries</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Documents</div>
+    <div class="stat-value blue">{{ doc_count }}</div>
+    <div class="stat-sub">total files indexed</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Projects</div>
+    <div class="stat-value amber">{{ project_count }}</div>
+    <div class="stat-sub">registered projects</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Update Events</div>
+    <div class="stat-value">{{ event_count }}</div>
+    <div class="stat-sub">total changes tracked</div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Technologies</span>
+    </div>
+    <div class="card-body-flush table-wrap">
+      <table>
+        <thead>
+          <tr><th>Technology</th><th>Docs</th><th>Version</th></tr>
+        </thead>
+        <tbody>
+          {% for lib in libraries %}
+          <tr>
+            <td><span class="text-green">{{ lib.library_id }}</span></td>
+            <td>{{ lib.documents_count }}</td>
+            <td class="text-secondary">{{ lib.version or "—" }}</td>
+          </tr>
+          {% endfor %}
+          {% if not libraries %}
+          <tr><td colspan="3" class="text-center text-muted">No technologies indexed</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Recent Activity</span>
+      <a href="/activity" class="btn btn-sm">View all</a>
+    </div>
+    <div class="card-body-flush">
+      {% for event in recent_events %}
+      <div class="timeline-item">
+        <div class="timeline-dot {{ event.event_type }}"></div>
+        <div class="timeline-body">
+          <div class="timeline-path">{{ event.technology }}/{{ event.rel_path }}</div>
+          <div class="timeline-meta">
+            <span class="badge {% if event.event_type == 'added' %}badge-green{% elif event.event_type == 'updated' %}badge-amber{% else %}badge-red{% endif %}">{{ event.event_type }}</span>
+            &middot; {{ event.detected_at[:19] }}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+      {% if not recent_events %}
+      <div class="empty-state"><div class="msg">No activity recorded yet</div></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Scheduler</span>
+  </div>
+  <div class="card-body">
+    {% if scheduler.installed %}
+    <span class="badge badge-green">Active</span>
+    <span class="text-secondary" style="margin-left: 8px;">
+      {% if scheduler.method == 'launchd' %}launchd agent{% else %}crontab{% endif %}
+      {% if scheduler.loaded is defined %}&middot; {% if scheduler.loaded %}loaded{% else %}not loaded{% endif %}{% endif %}
+    </span>
+    {% else %}
+    <span class="badge badge-muted">Not installed</span>
+    <span class="text-secondary" style="margin-left: 8px;">
+      Daily fetch is not scheduled. <a href="/schedule">Set it up</a>
+    </span>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

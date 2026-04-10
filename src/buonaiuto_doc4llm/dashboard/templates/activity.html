@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Buonaiuto Doc4LLM &middot; Activity{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-title">Activity Log</div>
+  <div class="page-subtitle">Document change events — additions, updates, deletions</div>
+</div>
+
+<div class="filters">
+  <form method="get" action="/activity" style="display: flex; gap: 8px; align-items: center;">
+    <select name="technology" class="input" style="width: 180px;"
+            onchange="this.form.submit()">
+      <option value="">All technologies</option>
+      {% for tech in all_technologies %}
+      <option value="{{ tech }}" {% if tech == current_tech %}selected{% endif %}>{{ tech }}</option>
+      {% endfor %}
+    </select>
+    <select name="event_type" class="input" style="width: 140px;"
+            onchange="this.form.submit()">
+      <option value="">All events</option>
+      <option value="added" {% if current_type == 'added' %}selected{% endif %}>Added</option>
+      <option value="updated" {% if current_type == 'updated' %}selected{% endif %}>Updated</option>
+      <option value="deleted" {% if current_type == 'deleted' %}selected{% endif %}>Deleted</option>
+    </select>
+    {% if current_tech or current_type %}
+    <a href="/activity" class="btn">Clear</a>
+    {% endif %}
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Events</span>
+    <span class="text-secondary text-sm">{{ events | length }} events</span>
+  </div>
+  <div class="card-body-flush">
+    {% for event in events %}
+    <div class="timeline-item">
+      <div class="timeline-dot {{ event.event_type }}"></div>
+      <div class="timeline-body">
+        <div class="timeline-path">
+          <span class="text-secondary">{{ event.technology }}/</span>{{ event.rel_path }}
+        </div>
+        <div class="timeline-meta">
+          <span class="badge {% if event.event_type == 'added' %}badge-green{% elif event.event_type == 'updated' %}badge-amber{% else %}badge-red{% endif %}">{{ event.event_type }}</span>
+          &middot; {{ event.detected_at[:19] }}
+          {% if event.title %}&middot; {{ event.title }}{% endif %}
+          {% if event.version %}&middot; v{{ event.version }}{% endif %}
+        </div>
+      </div>
+      <div class="text-muted text-sm nowrap">
+        #{{ event.id }}
+      </div>
+    </div>
+    {% endfor %}
+    {% if not events %}
+    <div class="empty-state">
+      <div class="icon">&#8942;</div>
+      <div class="msg">No events recorded yet. Run a scan to detect changes.</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

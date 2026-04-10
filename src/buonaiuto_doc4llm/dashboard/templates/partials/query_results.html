@@ -1,0 +1,45 @@
+{% if error %}
+<div class="flash flash-error"><span class="flash-msg">{{ error }}</span><button class="flash-close" onclick="this.parentElement.remove()">&times;</button></div>
+{% elif results %}
+<div class="query-meta">
+  <span class="text-secondary">{{ results | length }} result{{ 's' if results | length != 1 else '' }}</span>
+  <span class="text-muted">&middot;</span>
+  <span class="text-muted">{{ retrieval_mode }}</span>
+  {% if library_id %}
+  <span class="text-muted">&middot;</span>
+  <span class="badge badge-green">{{ library_id }}</span>
+  {% endif %}
+  <span class="text-muted">&middot;</span>
+  <span class="text-muted">query: "{{ query }}"</span>
+</div>
+
+{% for r in results %}
+<div class="result-card">
+  <div class="result-header">
+    <div class="result-title-row">
+      <span class="badge badge-green">{{ r.technology }}</span>
+      <span class="result-title">{{ r.title or r.rel_path }}</span>
+      <span class="result-score">score {{ r.score }}</span>
+    </div>
+    <div class="result-path mono text-secondary">{{ r.rel_path }}</div>
+  </div>
+  <div class="result-snippet">{{ r.snippet }}</div>
+  <div class="result-actions">
+    <button class="btn btn-sm"
+            hx-get="/api/read-doc?technology={{ r.technology | urlencode }}&amp;rel_path={{ r.rel_path | urlencode }}&amp;q={{ query | urlencode }}"
+            hx-target="#doc-viewer"
+            hx-swap="innerHTML scroll:#doc-viewer:top">
+      Read full document
+    </button>
+    <span class="text-muted text-sm">{{ r.uri }}</span>
+  </div>
+</div>
+{% endfor %}
+
+{% else %}
+<div class="empty-state">
+  <div class="empty-icon">&#8709;</div>
+  <div>No results found for "{{ query }}"</div>
+  <div class="text-secondary mt-4">Try a different query or search across all libraries</div>
+</div>
+{% endif %}

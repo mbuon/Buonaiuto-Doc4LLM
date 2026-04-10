@@ -1,0 +1,70 @@
+<div class="card mt-16" id="doc-viewer-card">
+  <div class="card-header">
+    <span class="card-title">{{ technology }}/{{ rel_path }}</span>
+    <button class="btn btn-sm" onclick="document.getElementById('doc-viewer').textContent=''">Close</button>
+  </div>
+  <div class="card-body">
+    <pre class="doc-content" id="doc-content-pre">{{ content }}</pre>
+  </div>
+</div>
+
+{% if highlight_query %}
+<script>
+(function() {
+  // Safe highlighting: works only on the pre-rendered text content,
+  // terms come from the server-rendered Jinja variable (not user input in DOM).
+  var pre = document.getElementById('doc-content-pre');
+  if (!pre) return;
+
+  var query = {{ highlight_query | tojson }};
+  var stopWords = ['the','and','for','how','use','with','from','that','this','are','was','not','can','will','you','its'];
+  var terms = query.toLowerCase().split(/\s+/).filter(function(t) {
+    return t.length > 2 && stopWords.indexOf(t) === -1;
+  });
+  if (!terms.length) return;
+
+  // Walk text nodes and wrap matches in <mark> elements (no innerHTML)
+  function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+  var pattern = new RegExp('(' + terms.map(escapeRegex).join('|') + ')', 'gi');
+
+  var walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT, null, false);
+  var textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+  var firstMark = null;
+  textNodes.forEach(function(node) {
+    var text = node.nodeValue;
+    if (!pattern.test(text)) return;
+    pattern.lastIndex = 0;
+
+    var frag = document.createDocumentFragment();
+    var lastIdx = 0;
+    var match;
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > lastIdx) {
+        frag.appendChild(document.createTextNode(text.slice(lastIdx, match.index)));
+      }
+      var mark = document.createElement('mark');
+      mark.className = 'hl';
+      mark.textContent = match[0];
+      frag.appendChild(mark);
+      if (!firstMark) firstMark = mark;
+      lastIdx = pattern.lastIndex;
+    }
+    if (lastIdx < text.length) {
+      frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+    }
+    node.parentNode.replaceChild(frag, node);
+  });
+
+  // Scroll to first highlight
+  if (firstMark) {
+    setTimeout(function() { firstMark.scrollIntoView({block: 'center', behavior: 'smooth'}); }, 100);
+  }
+
+  // Scroll the card into view
+  var card = document.getElementById('doc-viewer-card');
+  if (card) card.scrollIntoView({behavior: 'smooth'});
+})();
+</script>
+{% endif %}

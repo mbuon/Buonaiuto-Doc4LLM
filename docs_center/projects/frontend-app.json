@@ -1,0 +1,6 @@
+{
+  "project_id": "frontend-app",
+  "name": "Frontend App",
+  "technologies": ["react", "vercel"]
+}
+

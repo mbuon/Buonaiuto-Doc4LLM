@@ -1,0 +1,28 @@
+[
+  {
+    "query": "react hooks",
+    "expected_uri": "doc://react/docs/hooks.md",
+    "ranked_uris": [
+      "doc://react/docs/hooks.md",
+      "doc://react/docs/effects.md",
+      "doc://react/docs/context.md"
+    ]
+  },
+  {
+    "query": "python pathlib",
+    "expected_uri": "doc://python/docs/pathlib.md",
+    "ranked_uris": [
+      "doc://python/docs/os.md",
+      "doc://python/docs/pathlib.md",
+      "doc://python/docs/tempfile.md"
+    ]
+  },
+  {
+    "query": "nextjs routing",
+    "expected_uri": "doc://nextjs/docs/app/routing.md",
+    "ranked_uris": [
+      "doc://nextjs/docs/app/routing.md",
+      "doc://nextjs/docs/pages/router.md"
+    ]
+  }
+]

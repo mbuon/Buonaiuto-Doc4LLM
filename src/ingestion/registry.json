@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "libraries": [
+    {
+      "library_id": "nextjs",
+      "display_name": "Next.js",
+      "package_names": ["next", "nextjs"],
+      "sources": [
+        "https://nextjs.org/llms-full.txt",
+        "https://nextjs.org/llms.txt"
+      ]
+    },
+    {
+      "library_id": "react",
+      "display_name": "React",
+      "package_names": ["react", "react-dom"],
+      "sources": [
+        "https://react.dev/llms-full.txt",
+        "https://react.dev/llms.txt"
+      ]
+    },
+    {
+      "library_id": "vercel-ai-sdk",
+      "display_name": "Vercel AI SDK",
+      "package_names": ["ai", "@ai-sdk/openai", "@ai-sdk/anthropic", "@ai-sdk/react"],
+      "sources": [
+        "https://ai-sdk.dev/llms-full.txt",
+        "https://ai-sdk.dev/llms.txt",
+        "https://sdk.vercel.ai/llms-full.txt",
+        "https://sdk.vercel.ai/llms.txt"
+      ]
+    },
+    {
+      "library_id": "typescript",
+      "display_name": "TypeScript",
+      "package_names": ["typescript"],
+      "sources": [
+        "https://www.typescriptlang.org/llms-full.txt",
+        "https://www.typescriptlang.org/llms.txt",
+        "github://microsoft/TypeScript-Website/v2/packages/documentation/copy/en"
+      ]
+    },
+    {
+      "library_id": "tailwindcss",
+      "display_name": "Tailwind CSS",
+      "package_names": ["tailwindcss"],
+      "sources": [
+        "https://tailwindcss.com/llms-full.txt",
+        "https://tailwindcss.com/llms.txt",
+        "github://tailwindlabs/tailwindcss.com/main/src/docs"
+      ]
+    },
+    {
+      "library_id": "vite",
+      "display_name": "Vite",
+      "package_names": ["vite"],
+      "sources": [
+        "https://vite.dev/llms-full.txt",
+        "https://vite.dev/llms.txt"
+      ]
+    },
+    {
+      "library_id": "shadcn-ui",
+      "display_name": "shadcn/ui",
+      "package_names": ["shadcn-ui", "@shadcn/ui"],
+      "sources": [
+        "https://ui.shadcn.com/llms-full.txt",
+        "https://ui.shadcn.com/llms.txt"
+      ]
+    },
+    {
+      "library_id": "fastapi",
+      "display_name": "FastAPI",
+      "package_names": ["fastapi"],
+      "sources": [
+        "https://fastapi.tiangolo.com/llms-full.txt",
+        "https://fastapi.tiangolo.com/llms.txt",
+        "github://fastapi/fastapi/master/docs/en/docs"
+      ]
+    },
+    {
+      "library_id": "pydantic",
+      "display_name": "Pydantic",
+      "package_names": ["pydantic"],
+      "sources": [
+        "https://docs.pydantic.dev/latest/llms-full.txt",
+        "https://docs.pydantic.dev/latest/llms.txt"
+      ]
+    },
+    {
+      "library_id": "sqlalchemy",
+      "display_name": "SQLAlchemy",
+      "package_names": ["sqlalchemy", "SQLAlchemy"],
+      "sources": [
+        "https://docs.sqlalchemy.org/llms-full.txt",
+        "https://docs.sqlalchemy.org/llms.txt"
+      ]
+    },
+    {
+      "library_id": "pytest",
+      "display_name": "pytest",
+      "package_names": ["pytest"],
+      "sources": [
+        "https://docs.pytest.org/llms-full.txt",
+        "https://docs.pytest.org/llms.txt",
+        "github://pytest-dev/pytest/main/doc/en"
+      ]
+    },
+    {
+      "library_id": "langchain",
+      "display_name": "LangChain",
+      "package_names": ["langchain", "langchain-core", "langchain-community"],
+      "sources": [
+        "https://python.langchain.com/llms-full.txt",
+        "https://python.langchain.com/llms.txt"
+      ]
+    },
+    {
+      "library_id": "openai",
+      "display_name": "OpenAI SDK",
+      "package_names": ["openai"],
+      "sources": [
+        "https://platform.openai.com/docs/llms-full.txt",
+        "https://platform.openai.com/docs/llms.txt",
+        "https://raw.githubusercontent.com/openai/openai-python/main/README.md"
+      ]
+    },
+    {
+      "library_id": "anthropic",
+      "display_name": "Anthropic SDK",
+      "package_names": ["anthropic"],
+      "sources": [
+        "https://docs.anthropic.com/en/docs/llms-full.txt",
+        "https://docs.anthropic.com/en/docs/llms.txt",
+        "https://docs.anthropic.com/llms-full.txt",
+        "https://docs.anthropic.com/llms.txt",
+        "https://raw.githubusercontent.com/anthropics/anthropic-sdk-python/main/README.md"
+      ]
+    },
+    {
+      "library_id": "supabase",
+      "display_name": "Supabase",
+      "package_names": ["@supabase/supabase-js", "supabase", "supabase-py"],
+      "sources": [
+        "https://supabase.com/llms-full.txt",
+        "https://supabase.com/llms.txt"
+      ]
+    },
+    {
+      "library_id": "huggingface-transformers",
+      "display_name": "Hugging Face Transformers",
+      "package_names": ["transformers"],
+      "sources": [
+        "https://huggingface.co/docs/transformers/llms-full.txt",
+        "https://huggingface.co/docs/transformers/llms.txt"
+      ]
+    },
+    {
+      "library_id": "docker",
+      "display_name": "Docker",
+      "package_names": ["docker"],
+      "sources": [
+        "https://docs.docker.com/llms-full.txt",
+        "https://docs.docker.com/llms.txt"
+      ]
+    },
+    {
+      "library_id": "stripe",
+      "display_name": "Stripe",
+      "package_names": ["stripe", "@stripe/stripe-js", "@stripe/react-stripe-js"],
+      "sources": [
+        "https://docs.stripe.com/llms-full.txt",
+        "https://docs.stripe.com/llms.txt"
+      ]
+    },
+    {
+      "library_id": "python",
+      "display_name": "Python",
+      "package_names": ["python"],
+      "sources": [
+        "https://docs.python.org/3/llms-full.txt",
+        "https://docs.python.org/3/llms.txt",
+        "github://python/cpython/main/Doc"
+      ]
+    }
+  ]
+}

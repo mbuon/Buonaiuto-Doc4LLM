@@ -1,0 +1,168 @@
+# =====================================================================================
+# SECRETS & CREDENTIALS (NEVER commit)
+# =====================================================================================
+.env
+.env.*
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.p8
+certs/
+secrets/
+.apikeys
+.keys/
+.credentials
+*.secrets.json
+config.local.js
+kimi.sh
+
+# =====================================================================================
+# RUNTIME STATE (machine-local data, not source)
+# =====================================================================================
+# SQLite databases and WAL files
+state/
+# Qdrant vector store (large binary index, rebuilt from source)
+# (already covered by state/ above)
+
+# =====================================================================================
+# DOWNLOADED DOCUMENTATION (large, fetched at runtime via `fetch` command)
+# =====================================================================================
+docs_center/technologies/
+# Keep project subscription files — these ARE source config
+!docs_center/projects/
+
+# =====================================================================================
+# PRIVATE DOCS (personal notes, agent memory, prompt history, architecture drafts)
+# =====================================================================================
+docs/
+
+# =====================================================================================
+# BACKUPS & LOCAL SCRIPTS (dev-session artefacts, not part of the product)
+# =====================================================================================
+zscripts/
+backups/
+scripts/
+
+# =====================================================================================
+# PYTHON
+# =====================================================================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# =====================================================================================
+# NODE / FRONTEND
+# =====================================================================================
+node_modules/
+.next/
+out/
+dist/
+dist-ssr/
+*.tsbuildinfo
+.turbo/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =====================================================================================
+# ALEMBIC GENERATED (keep alembic.ini and env.py, ignore auto-generated output)
+# =====================================================================================
+# alembic/versions/ — keep versioned migrations in source control
+# nothing to exclude here by default
+
+# =====================================================================================
+# OS & EDITOR
+# =====================================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.AppleDouble
+.LSOverride
+.TemporaryItems
+Thumbs.db
+Desktop.ini
+.directory
+ehthumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*.iml
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# =====================================================================================
+# LOGS & TEMP
+# =====================================================================================
+*.log
+*.log.*
+logs/
+*.tmp
+*.temp
+*~
+*.orig
+*.rej
+
+# =====================================================================================
+# ARCHIVES & MEDIA (not part of the codebase)
+# =====================================================================================
+*.tar.gz
+*.zip
+*.rar
+*.7z
+*.mp4
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+*.docx
+*.bak
+*.backup
+
+# =====================================================================================
+# CLAUDE CODE & AGENT TOOLING (local config)
+# =====================================================================================
+.claude/
+.serena/
+.agents/skills/
+
+# =====================================================================================
+# VERCEL
+# =====================================================================================
+.vercel
+
+# =====================================================================================
+# MISC
+# =====================================================================================
+.cache/
+.pnp
+.pnp.js
+lerna-debug.log
+junit.xml
+test-results/

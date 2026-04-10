@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Buonaiuto Doc4LLM &middot; Query{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-title">Query Documentation</div>
+  <div class="page-subtitle">Search across all indexed libraries</div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">
+      {% if vector_provider %}
+        <span class="badge badge-green">{{ vector_provider }}</span>
+        {% if indexed_count > 0 %}
+          <span class="text-secondary">{{ indexed_count }} vectors indexed</span>
+        {% else %}
+          <span class="badge badge-amber">not indexed</span>
+        {% endif %}
+      {% else %}
+        <span class="badge badge-amber">lexical only</span>
+        <span class="text-secondary">no embedding provider</span>
+      {% endif %}
+    </span>
+    {% if has_indexer %}
+    <div style="display: flex; gap: 6px;">
+      <form style="display: inline;">
+        <select name="technology" class="input" style="width: 150px; height: 28px; font-size: 11px;" id="idx-tech">
+          <option value="">All libraries</option>
+          {% for tech in all_technologies %}
+          <option value="{{ tech }}">{{ tech }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <button class="btn btn-sm btn-primary"
+              hx-post="/api/index"
+              hx-target="#flash-container"
+              hx-swap="innerHTML"
+              hx-include="#idx-tech"
+              hx-confirm="Index documentation into vector DB? This may take a few minutes.">
+        <span class="htmx-indicator spinner"></span>
+        Build Index
+      </button>
+    </div>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    <form id="query-form"
+          hx-get="/api/query"
+          hx-target="#query-results"
+          hx-swap="innerHTML"
+          hx-indicator="#query-spinner"
+          style="display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap;">
+      <div style="flex: 1; min-width: 300px;">
+        <label class="form-label">Search query</label>
+        <input type="text" name="q" class="input" style="width: 100%;"
+               placeholder="e.g. how to use edge functions in supabase"
+               autofocus
+               required>
+      </div>
+      <div style="width: 180px;">
+        <label class="form-label">Library</label>
+        <select name="technology" class="input" style="width: 100%;">
+          <option value="">All libraries</option>
+          {% for tech in all_technologies %}
+          <option value="{{ tech }}">{{ tech }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div style="width: 90px;">
+        <label class="form-label">Limit</label>
+        <select name="limit" class="input" style="width: 100%;">
+          <option value="5">5</option>
+          <option value="10" selected>10</option>
+          <option value="20">20</option>
+          <option value="50">50</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary" style="height: 34px;">
+        <span id="query-spinner" class="htmx-indicator spinner" style="margin-right: 6px;"></span>
+        Search
+      </button>
+    </form>
+  </div>
+</div>
+
+<div id="query-results">
+  <div class="empty-state">
+    <div class="empty-icon">&#8981;</div>
+    <div>Enter a query to search across {{ doc_count }} documents in {{ tech_count }} libraries</div>
+    {% if indexed_count > 0 %}
+    <div class="text-secondary mt-4">Semantic search enabled &mdash; {{ indexed_count }} vectors in Qdrant</div>
+    {% else %}
+    <div class="text-secondary mt-4">Click <strong>Build Index</strong> to enable semantic search, or search with lexical matching</div>
+    {% endif %}
+  </div>
+</div>
+
+<div id="doc-viewer"></div>
+{% endblock %}

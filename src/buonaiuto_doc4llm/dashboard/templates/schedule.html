@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}Buonaiuto Doc4LLM &middot; Fetch &amp; Schedule{% endblock %}
+
+{% block flash %}
+{% if flash_msg %}
+<div class="flash flash-{{ flash_type or 'info' }}"><span class="flash-msg">{{ flash_msg }}</span><button class="flash-close" onclick="this.parentElement.remove()">&times;</button></div>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-title">Fetch &amp; Schedule</div>
+  <div class="page-subtitle">Manage documentation fetching and daily schedule</div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Daily Schedule</span>
+      {% if scheduler.installed %}
+      <span class="badge badge-green">Active</span>
+      {% else %}
+      <span class="badge badge-muted">Not installed</span>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      {% if scheduler.installed %}
+      <div class="mb-8">
+        <span class="text-secondary">Method:</span>
+        <span>{{ scheduler.method }}</span>
+      </div>
+      {% if scheduler.plist is defined %}
+      <div class="mb-8">
+        <span class="text-secondary">Plist:</span>
+        <span class="mono text-sm">{{ scheduler.plist }}</span>
+      </div>
+      {% endif %}
+      {% if scheduler.loaded is defined %}
+      <div class="mb-16">
+        <span class="text-secondary">Loaded:</span>
+        <span class="{% if scheduler.loaded %}text-green{% else %}text-red{% endif %}">
+          {{ "yes" if scheduler.loaded else "no" }}
+        </span>
+      </div>
+      {% endif %}
+      <button class="btn btn-danger"
+              hx-post="/api/schedule-uninstall"
+              hx-target="#flash-container"
+              hx-swap="innerHTML"
+              hx-confirm="Remove the daily fetch schedule?">
+        <span class="htmx-indicator spinner"></span>
+        Uninstall Schedule
+      </button>
+      {% else %}
+      <form hx-post="/api/schedule-install" hx-target="#flash-container" hx-swap="innerHTML">
+        <div class="form-row">
+          <div>
+            <div class="form-label">Hour (0-23)</div>
+            <input type="number" name="hour" class="input" value="4" min="0" max="23" style="width: 80px;">
+          </div>
+          <div>
+            <div class="form-label">Minute (0-59)</div>
+            <input type="number" name="minute" class="input" value="0" min="0" max="59" style="width: 80px;">
+          </div>
+          <div style="padding-top: 18px;">
+            <button type="submit" class="btn btn-primary">
+              <span class="htmx-indicator spinner"></span>
+              Install Schedule
+            </button>
+          </div>
+        </div>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Manual Actions</span>
+    </div>
+    <div class="card-body">
+      <div class="mb-16">
+        <button class="btn btn-primary" style="width: 100%;"
+                hx-post="/api/scan"
+                hx-target="#flash-container"
+                hx-swap="innerHTML">
+          <span class="htmx-indicator spinner"></span>
+          Scan Local Docs
+        </button>
+      </div>
+      <div class="mb-16">
+        <button class="btn" style="width: 100%;"
+                hx-post="/api/fetch-all"
+                hx-target="#flash-container"
+                hx-swap="innerHTML">
+          <span class="htmx-indicator spinner"></span>
+          Fetch All from Web
+        </button>
+      </div>
+      <div>
+        <form hx-post="/api/fetch" hx-target="#flash-container" hx-swap="innerHTML"
+              style="display: flex; gap: 8px;">
+          <select name="technology" class="input" required>
+            <option value="">Select technology...</option>
+            {% for tech in all_technologies %}
+            <option value="{{ tech }}">{{ tech }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" class="btn">
+            <span class="htmx-indicator spinner"></span>
+            Fetch
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Fetch State</span>
+    <span class="text-secondary text-sm">HTTP cache status per technology</span>
+  </div>
+  <div class="card-body-flush table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Technology</th>
+          <th>Source URL</th>
+          <th>Last Fetched</th>
+          <th>Status</th>
+          <th>ETag</th>
+          <th>Bytes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for fs in fetch_states %}
+        <tr>
+          <td class="text-green">{{ fs.technology }}</td>
+          <td class="mono text-secondary truncate" style="max-width: 300px;" title="{{ fs.source_url }}">{{ fs.source_url }}</td>
+          <td class="text-secondary nowrap">{{ fs.last_fetched_at[:19] if fs.last_fetched_at else "—" }}</td>
+          <td>
+            {% if fs.last_status_code == 200 %}
+            <span class="badge badge-green">200</span>
+            {% elif fs.last_status_code == 304 %}
+            <span class="badge badge-muted">304</span>
+            {% else %}
+            <span class="badge badge-red">{{ fs.last_status_code }}</span>
+            {% endif %}
+          </td>
+          <td class="mono text-muted truncate" style="max-width: 150px;" title="{{ fs.etag or '' }}">{{ fs.etag or "—" }}</td>
+          <td class="text-secondary nowrap">{{ fs.bytes_received | filesizeformat }}</td>
+        </tr>
+        {% endfor %}
+        {% if not fetch_states %}
+        <tr><td colspan="6" class="text-center text-muted">No fetch history. Run a fetch to populate.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

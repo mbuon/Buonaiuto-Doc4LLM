@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Buonaiuto Doc4LLM &middot; Documents{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-title">Documents</div>
+  <div class="page-subtitle">Browse and search indexed documentation</div>
+</div>
+
+<div class="filters">
+  <form method="get" action="/documents" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+    <select name="technology" class="input" style="width: 180px;"
+            onchange="this.form.submit()">
+      <option value="">All technologies</option>
+      {% for tech in all_technologies %}
+      <option value="{{ tech }}" {% if tech == current_tech %}selected{% endif %}>{{ tech }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="q" class="input" style="min-width: 280px;"
+           placeholder="Search documents..."
+           value="{{ query or '' }}">
+    <button type="submit" class="btn btn-primary">Search</button>
+    {% if query or current_tech %}
+    <a href="/documents" class="btn">Clear</a>
+    {% endif %}
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">
+      {% if query %}Search results for "{{ query }}"{% else %}All documents{% endif %}
+      {% if current_tech %} in {{ current_tech }}{% endif %}
+    </span>
+    <span class="text-secondary text-sm">{{ documents | length }} results</span>
+  </div>
+  <div class="card-body-flush table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Technology</th>
+          <th>Path</th>
+          <th>Title</th>
+          <th>Version</th>
+          <th>Last Scanned</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for doc in documents %}
+        <tr>
+          <td><span class="badge badge-green">{{ doc.technology }}</span></td>
+          <td class="mono">{{ doc.rel_path }}</td>
+          <td>{{ doc.title or "—" }}</td>
+          <td class="text-secondary">{{ doc.version or "—" }}</td>
+          <td class="text-secondary nowrap">{{ doc.last_scanned_at[:19] if doc.last_scanned_at else "—" }}</td>
+          <td>
+            <button class="btn btn-sm"
+                    hx-get="/api/read-doc?technology={{ doc.technology | urlencode }}&amp;rel_path={{ doc.rel_path | urlencode }}"
+                    hx-target="#doc-viewer"
+                    hx-swap="innerHTML">
+              Read
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not documents %}
+        <tr><td colspan="6" class="text-center text-muted">
+          {% if query %}No documents matching "{{ query }}"{% else %}No documents indexed{% endif %}
+        </td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div id="doc-viewer"></div>
+{% endblock %}

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "buonaiuto-doc4llm": {
+      "command": "/opt/anaconda3/bin/python",
+      "args": ["-m", "buonaiuto_doc4llm", "--base-dir", "/Users/massimo/Projects_Massimo/Documentation_LLMs", "serve"],
+      "env": {
+        "PYTHONPATH": "/Users/massimo/Projects_Massimo/Documentation_LLMs/src"
+      }
+    }
+  }
+}

@@ -1,0 +1,649 @@
+from __future__ import annotations
+
+import json
+import sys
+import traceback
+from pathlib import Path
+from typing import Any
+from urllib.parse import unquote, urlparse
+
+from .service import DocsHubService
+
+
+class MCPServer:
+    def __init__(self, base_dir: Path | str):
+        base = Path(base_dir)
+        retriever = None
+        indexer = None
+        try:
+            from buonaiuto_doc4llm.vector_setup import create_qdrant_retriever_and_indexer
+            vector_info = create_qdrant_retriever_and_indexer(base)
+            retriever = vector_info.get("retriever")
+            indexer = vector_info.get("indexer")
+        except Exception:
+            pass  # Fall back to lexical search
+        self.service = DocsHubService(base, retriever=retriever, indexer=indexer)
+
+    def serve(self) -> None:
+        for raw_line in sys.stdin:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                request = json.loads(line)
+                response = self.handle_request(request)
+            except Exception as exc:  # pragma: no cover
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {
+                        "code": -32000,
+                        "message": str(exc),
+                        "data": traceback.format_exc(),
+                    },
+                }
+            sys.stdout.write(json.dumps(response) + "\n")
+            sys.stdout.flush()
+
+    def handle_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        method = request.get("method")
+        params = request.get("params", {})
+        request_id = request.get("id")
+
+        result: Any
+        if method == "initialize":
+            bootstrap_summary = self._bootstrap_from_initialize_params(params)
+            result = {
+                "protocolVersion": "2025-03-26",
+                "serverInfo": {"name": "Buonaiuto Doc4LLM", "version": "0.1.0"},
+                "capabilities": {
+                    "tools": {},
+                    "resources": {},
+                    "prompts": {},
+                },
+                "bootstrap": bootstrap_summary,
+            }
+        elif method == "ping":
+            result = {}
+        elif method == "tools/list":
+            result = {"tools": self._list_tools()}
+        elif method == "tools/call":
+            try:
+                result = self._call_tool(params["name"], params.get("arguments", {}))
+            except Exception as exc:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32000,
+                        "message": str(exc),
+                        "data": traceback.format_exc(),
+                    },
+                }
+        elif method == "resources/list":
+            result = {"resources": self.service.list_resources()}
+        elif method == "resources/read":
+            resource = self.service.read_resource(params["uri"])
+            result = {
+                "contents": [
+                    {
+                        "uri": resource["uri"],
+                        "mimeType": resource["mimeType"],
+                        "text": resource["text"],
+                    }
+                ]
+            }
+        elif method == "prompts/list":
+            result = {
+                "prompts": [
+                    {
+                        "name": "documentation_updates_summary",
+                        "description": "Tell the model which local documentation updates should be read for a project.",
+                        "arguments": [
+                            {
+                                "name": "project_id",
+                                "required": True,
+                            },
+                            {
+                                "name": "limit",
+                                "required": False,
+                            },
+                        ],
+                    }
+                ]
+            }
+        elif method == "prompts/get":
+            if params["name"] != "documentation_updates_summary":
+                raise ValueError(f"Unknown prompt: {params['name']}")
+            args = params.get("arguments", {})
+            prompt = self.service.build_update_prompt(
+                project_id=args["project_id"],
+                limit=int(args.get("limit", 10)),
+            )
+            result = {
+                "description": "Prompt for local documentation updates",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": {
+                            "type": "text",
+                            "text": prompt,
+                        },
+                    }
+                ],
+            }
+        else:
+            raise ValueError(f"Unsupported method: {method}")
+
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+
+    def _list_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "scan_docs",
+                "description": (
+                    "Scan the local documentation center and record new update events. "
+                    "Returns {scanned_at, technologies, total_documents, total_events}."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+            {
+                "name": "list_project_updates",
+                "description": (
+                    "List documentation updates for a project based on its technology subscriptions. "
+                    "Returns {project_id, unseen_count, latest_event_id, last_seen_event_id, events}. "
+                    "unseen_count is the total number of unread events (may exceed limit). "
+                    "latest_event_id is the highest unread event ID — pass to ack_project_updates to mark all as read."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "string"},
+                        "unread_only": {"type": "boolean"},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["project_id"],
+                },
+            },
+            {
+                "name": "ack_project_updates",
+                "description": (
+                    "Mark updates as seen for a project. "
+                    "If through_event_id is omitted, ALL current updates are marked as read. "
+                    "Pass a specific event ID to acknowledge only up to that point."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_id": {"type": "string"},
+                        "through_event_id": {
+                            "type": "integer",
+                            "description": "Mark updates up to this event ID as read. If omitted, marks ALL updates as read.",
+                        },
+                    },
+                    "required": ["project_id"],
+                },
+            },
+            {
+                "name": "read_doc",
+                "description": (
+                    "Read a local documentation document by technology and relative path. "
+                    "Large documents are automatically truncated to fit the token budget. "
+                    "Pass a query to prioritize the most relevant sections, or use section "
+                    "to read a specific heading. When truncated, the response includes a "
+                    "table_of_contents with all section names for targeted follow-up reads. "
+                    "Response includes char_count, locale, last_scanned_at, and last_fetched_at metadata."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "technology": {"type": "string"},
+                        "rel_path": {"type": "string"},
+                        "max_tokens": {
+                            "type": "integer",
+                            "description": "Maximum tokens to return (default 20000). Sections are prioritized by query relevance when truncating.",
+                            "default": 20000,
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "Optional query to prioritize relevant sections when the document exceeds max_tokens.",
+                        },
+                        "section": {
+                            "type": "string",
+                            "description": "Read only the section matching this heading text (case-insensitive substring match). Use table_of_contents from a previous read to discover section names.",
+                        },
+                    },
+                    "required": ["technology", "rel_path"],
+                },
+            },
+            {
+                "name": "read_full_page",
+                "description": (
+                    "Read a canonical page for a given library/version/path. "
+                    "Large pages are automatically truncated to fit the token budget. "
+                    "Pass a query to prioritize the most relevant sections, or use section "
+                    "to read a specific heading. Response includes char_count, locale, and freshness metadata."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "library_id": {
+                            "type": "string",
+                            "description": "Library ID (same as 'technology' in read_doc). Alias: technology.",
+                        },
+                        "technology": {
+                            "type": "string",
+                            "description": "Alias for library_id (for consistency with read_doc).",
+                        },
+                        "version": {
+                            "type": "string",
+                            "description": "If provided, validates that stored version matches. Raises error on mismatch.",
+                        },
+                        "rel_path": {"type": "string"},
+                        "max_tokens": {
+                            "type": "integer",
+                            "description": "Maximum tokens to return (default 20000). Sections are prioritized by query relevance when truncating.",
+                            "default": 20000,
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "Optional query to prioritize relevant sections when the document exceeds max_tokens.",
+                        },
+                        "section": {
+                            "type": "string",
+                            "description": "Read only the section matching this heading text.",
+                        },
+                    },
+                    "required": ["rel_path"],
+                },
+            },
+            {
+                "name": "search_docs",
+                "description": "Search local documentation text for a technology.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "technology": {"type": "string"},
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["technology", "query"],
+                },
+            },
+            {
+                "name": "search_documentation",
+                "description": (
+                    "Search across one or more documentation libraries with version-aware filtering. "
+                    "Supports cross-technology search — pass multiple libraries to find related patterns "
+                    "across different technologies (e.g., Stripe webhooks + Supabase Edge Functions). "
+                    "Results include char_count and last_scanned_at for size-aware reading. "
+                    "Response includes result_count_by_library breakdown per requested library."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "libraries": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "version": {"type": "string"},
+                                },
+                                "required": ["id"],
+                            },
+                        },
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "list_supported_libraries",
+                "description": (
+                    "List libraries and versions currently available in the local index. "
+                    "Each entry includes: monolith (bool), status ('ok'/'broken'), "
+                    "last_scanned_at, last_fetched_at, and documents_count."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+            {
+                "name": "diff_since",
+                "description": (
+                    "Show documentation changes (added/updated/deleted) since a given timestamp. "
+                    "Use to detect stale docs or track what changed between sessions. "
+                    "Supports pagination via offset and filtering by event_type."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "since": {
+                            "type": "string",
+                            "description": "ISO 8601 timestamp (e.g. '2026-04-08T00:00:00'). Returns changes after this time.",
+                        },
+                        "technology": {"type": "string", "description": "Filter by technology (optional)."},
+                        "event_type": {
+                            "type": "string",
+                            "description": "Filter by event type: 'added', 'updated', or 'deleted'.",
+                            "enum": ["added", "updated", "deleted"],
+                        },
+                        "limit": {"type": "integer", "description": "Max results per page (default 100)."},
+                        "offset": {"type": "integer", "description": "Skip first N results for pagination (default 0)."},
+                    },
+                    "required": ["since"],
+                },
+            },
+            {
+                "name": "list_docs",
+                "description": (
+                    "List all documents indexed for a technology. Use to browse available "
+                    "docs before reading, or to discover document paths for section-level "
+                    "reads. Each result includes char_count for size-aware reading."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "technology": {"type": "string", "description": "Library/technology ID."},
+                        "path_prefix": {
+                            "type": "string",
+                            "description": "Filter by path prefix (e.g. 'docs/guides/' to browse a subdirectory).",
+                        },
+                        "limit": {"type": "integer", "description": "Max results (default 200)."},
+                    },
+                    "required": ["technology"],
+                },
+            },
+            {
+                "name": "install_project",
+                "description": "Auto-detect technologies from a project path, bootstrap local docs cache, and index docs.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string"},
+                        "project_id": {"type": "string"},
+                    },
+                    "required": ["project_path"],
+                },
+            },
+            {
+                "name": "fetch_docs",
+                "description": (
+                    "Fetch the latest documentation from the web for a technology "
+                    "(or all registered technologies) and re-index the local cache. "
+                    "Uses conditional HTTP (ETag / If-Modified-Since) to skip unchanged sources."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "technology": {
+                            "type": "string",
+                            "description": "Optional. Library ID to fetch (e.g. 'react', 'nextjs'). Omit to fetch all.",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "submit_feedback",
+                "description": (
+                    "Submit mandatory feedback on documentation quality. "
+                    "After receiving documentation via read_doc, search_docs, or search_documentation, "
+                    "the requester MUST call this tool to report whether the content was helpful. "
+                    "Both 'satisfied' (yes/no) and 'reason' (why) are required."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "technology": {
+                            "type": "string",
+                            "description": "The technology/library the documentation belongs to.",
+                        },
+                        "rel_path": {
+                            "type": "string",
+                            "description": "Relative path of the document that was read.",
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "The original query or question the requester was trying to answer.",
+                        },
+                        "satisfied": {
+                            "type": "boolean",
+                            "description": "Was the documentation what you were looking for? true = yes, false = no.",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Explain why the documentation did or did not meet your needs.",
+                        },
+                        "requester_id": {
+                            "type": "string",
+                            "description": "Identifier for the requester (e.g. agent name, session id).",
+                        },
+                    },
+                    "required": ["technology", "rel_path", "query", "satisfied", "reason", "requester_id"],
+                },
+            },
+            {
+                "name": "list_feedback",
+                "description": (
+                    "List feedback entries on documentation quality, most recent first. "
+                    "Supports filtering by technology and time range."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "technology": {
+                            "type": "string",
+                            "description": "Filter by technology. Omit for all.",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max entries to return (default 100).",
+                        },
+                        "since": {
+                            "type": "string",
+                            "description": "ISO 8601 timestamp. Only include feedback created at or after this time.",
+                        },
+                        "until": {
+                            "type": "string",
+                            "description": "ISO 8601 timestamp. Only include feedback created at or before this time.",
+                        },
+                    },
+                },
+            },
+            {
+                "name": "feedback_stats",
+                "description": (
+                    "Get aggregate statistics on documentation quality feedback, with per-document breakdowns. "
+                    "satisfaction_rate is rounded to 4 decimal places. low_quality_docs includes documents with "
+                    "satisfaction < 50% and at least 2 feedback entries."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "technology": {
+                            "type": "string",
+                            "description": "Filter stats by technology. Omit for all.",
+                        },
+                        "since": {
+                            "type": "string",
+                            "description": "ISO 8601 timestamp. Only include feedback created at or after this time.",
+                        },
+                        "until": {
+                            "type": "string",
+                            "description": "ISO 8601 timestamp. Only include feedback created at or before this time.",
+                        },
+                    },
+                },
+            },
+        ]
+
+    def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name == "scan_docs":
+            payload = self.service.scan()
+        elif name == "list_project_updates":
+            payload = self.service.list_project_updates(
+                project_id=arguments["project_id"],
+                unread_only=bool(arguments.get("unread_only", True)),
+                limit=int(arguments.get("limit", 20)),
+            )
+        elif name == "ack_project_updates":
+            payload = {
+                "project_id": arguments["project_id"],
+                "last_seen_event_id": self.service.ack_project_updates(
+                    project_id=arguments["project_id"],
+                    through_event_id=arguments.get("through_event_id"),
+                ),
+            }
+        elif name == "read_doc":
+            payload = self.service.read_doc(
+                technology=arguments["technology"],
+                rel_path=arguments["rel_path"],
+                max_tokens=int(arguments.get("max_tokens", 20000)),
+                query=arguments.get("query"),
+                section=arguments.get("section"),
+            )
+        elif name == "read_full_page":
+            lib_id = arguments.get("library_id") or arguments.get("technology")
+            if not lib_id:
+                raise ValueError("Either library_id or technology is required")
+            payload = self.service.read_full_page(
+                library_id=lib_id,
+                version=arguments.get("version"),
+                rel_path=arguments["rel_path"],
+                max_tokens=int(arguments.get("max_tokens", 20000)),
+                query=arguments.get("query"),
+                section=arguments.get("section"),
+            )
+        elif name == "search_docs":
+            payload = self.service.search_docs(
+                technology=arguments["technology"],
+                query=arguments["query"],
+                limit=int(arguments.get("limit", 5)),
+            )
+        elif name == "search_documentation":
+            payload = self.service.search_documentation(
+                query=arguments["query"],
+                libraries=arguments.get("libraries"),
+                limit=int(arguments.get("limit", 5)),
+                workspace_id=str(arguments.get("workspace_id", "local")),
+            )
+        elif name == "list_supported_libraries":
+            payload = self.service.list_supported_libraries()
+        elif name == "diff_since":
+            payload = self.service.diff_since(
+                since=arguments["since"],
+                technology=arguments.get("technology"),
+                event_type=arguments.get("event_type"),
+                limit=int(arguments.get("limit", 100)),
+                offset=int(arguments.get("offset", 0)),
+            )
+        elif name == "list_docs":
+            payload = self.service.list_docs(
+                technology=arguments["technology"],
+                path_prefix=arguments.get("path_prefix"),
+                limit=int(arguments.get("limit", 200)),
+            )
+        elif name == "install_project":
+            payload = self.service.install_project(
+                project_root=arguments["project_path"],
+                project_id=arguments.get("project_id"),
+            )
+        elif name == "fetch_docs":
+            payload = self.service.fetch_docs(
+                technology=arguments.get("technology"),
+            )
+        elif name == "submit_feedback":
+            payload = self.service.submit_feedback(
+                technology=arguments["technology"],
+                rel_path=arguments["rel_path"],
+                query=arguments["query"],
+                satisfied=bool(arguments["satisfied"]),
+                reason=arguments["reason"],
+                requester_id=arguments["requester_id"],
+            )
+        elif name == "list_feedback":
+            payload = self.service.list_feedback(
+                technology=arguments.get("technology"),
+                limit=int(arguments.get("limit", 100)),
+                since=arguments.get("since"),
+                until=arguments.get("until"),
+            )
+        elif name == "feedback_stats":
+            payload = self.service.feedback_stats(
+                technology=arguments.get("technology"),
+                since=arguments.get("since"),
+                until=arguments.get("until"),
+            )
+        else:
+            raise ValueError(f"Unknown tool: {name}")
+
+        text = json.dumps(payload, indent=2)
+
+        # Hard cap: prevent MCP tool result overflow.  If the serialized
+        # response exceeds 100K chars (~25K tokens), truncate the content
+        # field inside the payload and re-serialize.
+        max_response_chars = 100_000
+        if len(text) > max_response_chars and isinstance(payload, dict) and "content" in payload:
+            budget = max_response_chars - 2000  # room for metadata
+            payload["content"] = payload["content"][:budget] + (
+                "\n\n---\n[Response truncated to fit MCP tool result limit. "
+                "Use section parameter or reduce max_tokens to read specific parts.]"
+            )
+            payload["response_truncated"] = True
+            text = json.dumps(payload, indent=2)
+
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": text,
+                }
+            ]
+        }
+
+    def _bootstrap_from_initialize_params(self, params: dict[str, Any]) -> dict[str, Any] | None:
+        project_path = self._resolve_project_path(params)
+        if project_path is None:
+            return None
+
+        project_id = params.get("project_id") or params.get("projectId")
+        return self.service.install_project(
+            project_root=project_path,
+            project_id=project_id if isinstance(project_id, str) else None,
+        )
+
+    @staticmethod
+    def _resolve_project_path(params: dict[str, Any]) -> Path | None:
+        direct = params.get("project_path") or params.get("projectPath")
+        if isinstance(direct, str) and direct.strip():
+            return Path(direct.strip())
+
+        folders = params.get("workspaceFolders")
+        if isinstance(folders, list):
+            for folder in folders:
+                if not isinstance(folder, dict):
+                    continue
+                uri = folder.get("uri")
+                if isinstance(uri, str):
+                    path = MCPServer._path_from_uri(uri)
+                    if path is not None:
+                        return path
+
+        root_uri = params.get("rootUri")
+        if isinstance(root_uri, str):
+            return MCPServer._path_from_uri(root_uri)
+
+        return None
+
+    @staticmethod
+    def _path_from_uri(uri: str) -> Path | None:
+        parsed = urlparse(uri)
+        if parsed.scheme != "file":
+            return None
+        return Path(unquote(parsed.path))

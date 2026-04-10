@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+{% block title %}Buonaiuto Doc4LLM &middot; Technologies{% endblock %}
+
+{% block flash %}
+{% if flash_msg %}
+<div class="flash flash-{{ flash_type or 'info' }}"><span class="flash-msg">{{ flash_msg }}</span><button class="flash-close" onclick="this.parentElement.remove()">&times;</button></div>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-title">Technologies</div>
+  <div class="page-subtitle">All indexed documentation libraries</div>
+</div>
+
+<!-- Status ticker (hidden until activated) -->
+<div id="status-ticker" class="ticker">
+  <div class="ticker-header">
+    <div class="ticker-header-left">
+      <span id="ticker-label">Working…</span>
+      <div class="ticker-progress-bar">
+        <div id="ticker-progress-fill" class="ticker-progress-fill"></div>
+      </div>
+    </div>
+    <span id="ticker-counter" class="ticker-counter"></span>
+    <button class="ticker-close" id="ticker-close" onclick="closeTicker()">&times;</button>
+  </div>
+  <div id="ticker-body" class="ticker-body"></div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Indexed Libraries</span>
+    <div style="display: flex; gap: 8px;">
+      <button class="btn btn-primary" id="btn-scan" onclick="startStream('scan')">
+        Scan Now
+      </button>
+      <button class="btn" id="btn-fetch" onclick="startStream('fetch')">
+        Fetch All
+      </button>
+    </div>
+  </div>
+  <div class="card-body-flush table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Technology</th>
+          <th>Documents</th>
+          <th>Version</th>
+          <th>Last Fetched</th>
+          <th>Source URL</th>
+          <th>Bytes</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="tech-table">
+        {% for lib in libraries %}
+        <tr>
+          <td>
+            <a href="/documents?technology={{ lib.library_id }}" class="text-green">{{ lib.library_id }}</a>
+          </td>
+          <td>{{ lib.documents_count }}</td>
+          <td class="text-secondary">{{ lib.version or "—" }}</td>
+          <td class="text-secondary nowrap">
+            {% if lib.fetch_state %}
+            {{ lib.fetch_state.last_fetched_at[:19] }}
+            {% else %}
+            <span class="text-muted">never</span>
+            {% endif %}
+          </td>
+          <td class="mono truncate copyable" style="max-width: 300px; cursor: pointer;" title="Click to copy" onclick="navigator.clipboard.writeText(this.dataset.url).then(function(){var el=event.currentTarget;el.classList.add('copied');setTimeout(function(){el.classList.remove('copied')},1200)})" data-url="{{ lib.fetch_state.source_url if lib.fetch_state else '' }}">
+            {% if lib.fetch_state %}{{ lib.fetch_state.source_url }}{% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td class="text-secondary nowrap">
+            {% if lib.fetch_state %}{{ lib.fetch_state.bytes_received | filesizeformat }}{% else %}—{% endif %}
+          </td>
+          <td>
+            <button class="btn btn-sm"
+                    hx-post="/api/fetch?technology={{ lib.library_id | urlencode }}"
+                    hx-target="#flash-container"
+                    hx-swap="innerHTML">
+              <span class="htmx-indicator spinner"></span>
+              Fetch
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not libraries %}
+        <tr><td colspan="7" class="text-center text-muted">No technologies indexed. Run a scan or install a project.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Registry</span>
+    <span class="text-secondary text-sm">{{ registry_count }} libraries in registry</span>
+  </div>
+  <div class="card-body-flush table-wrap">
+    <table>
+      <thead>
+        <tr><th>Library ID</th><th>Package Names</th><th>Sources</th></tr>
+      </thead>
+      <tbody>
+        {% for entry in registry %}
+        <tr>
+          <td class="text-green">{{ entry.library_id }}</td>
+          <td class="mono text-secondary">{{ entry.package_names | join(", ") }}</td>
+          <td class="mono text-secondary truncate" style="max-width: 400px;">
+            {% for src in entry.sources %}
+            <div>{{ src }}</div>
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+var activeSource = null;
+
+function escHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function formatBytes(b) {
+  if (b === 0) return '0 B';
+  var units = ['B', 'KB', 'MB'];
+  var i = Math.min(Math.floor(Math.log(b) / Math.log(1024)), 2);
+  return (b / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+}
+
+function makeFlash(msg, tone) {
+  var el = document.createElement('div');
+  el.className = 'flash flash-' + tone;
+  var span = document.createElement('span');
+  span.className = 'flash-msg';
+  span.textContent = msg;
+  var btn = document.createElement('button');
+  btn.className = 'flash-close';
+  btn.textContent = '\u00d7';
+  btn.onclick = function() { el.remove(); };
+  el.appendChild(span);
+  el.appendChild(btn);
+  return el;
+}
+
+function updateLine(el, d) {
+  el.textContent = '';
+
+  var iconSpan = document.createElement('span');
+  var detailText = '';
+
+  if (d.status === 'scanning' || d.status === 'fetching') {
+    iconSpan.className = 'ticker-icon spinning';
+    detailText = d.status + '\u2026';
+  } else if (d.status === 'done') {
+    iconSpan.className = 'ticker-icon ok';
+    iconSpan.textContent = '\u2713';
+    if (d.documents_indexed !== undefined) {
+      detailText = d.documents_indexed + ' docs, ' + d.events_created + ' events';
+    } else if (d.bytes !== undefined) {
+      detailText = formatBytes(d.bytes);
+    }
+  } else if (d.status === 'skipped') {
+    iconSpan.className = 'ticker-icon skip';
+    iconSpan.textContent = '\u2014';
+    detailText = d.reason || 'not modified';
+  } else if (d.status === 'error') {
+    iconSpan.className = 'ticker-icon fail';
+    iconSpan.textContent = '\u2717';
+    detailText = d.message || 'failed';
+  } else {
+    iconSpan.className = 'ticker-icon';
+    iconSpan.textContent = '\u00b7';
+    detailText = d.status;
+  }
+
+  var techSpan = document.createElement('span');
+  techSpan.className = 'ticker-tech';
+  techSpan.textContent = d.technology;
+
+  var detailSpan = document.createElement('span');
+  detailSpan.className = 'ticker-detail';
+  detailSpan.textContent = detailText;
+
+  el.appendChild(iconSpan);
+  el.appendChild(techSpan);
+  el.appendChild(detailSpan);
+}
+
+function closeTicker() {
+  document.getElementById('status-ticker').classList.remove('active');
+  if (activeSource) {
+    activeSource.close();
+    activeSource = null;
+    document.getElementById('btn-scan').disabled = false;
+    document.getElementById('btn-fetch').disabled = false;
+  }
+}
+
+function startStream(mode) {
+  if (activeSource) activeSource.close();
+
+  var url = mode === 'scan' ? '/api/scan-stream' : '/api/fetch-all-stream';
+  var label = mode === 'scan' ? 'Scanning' : 'Fetching';
+
+  document.getElementById('btn-scan').disabled = true;
+  document.getElementById('btn-fetch').disabled = true;
+
+  var ticker = document.getElementById('status-ticker');
+  var body = document.getElementById('ticker-body');
+  var counter = document.getElementById('ticker-counter');
+  var fill = document.getElementById('ticker-progress-fill');
+  var labelEl = document.getElementById('ticker-label');
+
+  ticker.classList.add('active');
+  body.textContent = '';
+  counter.textContent = '';
+  fill.style.width = '0%';
+  fill.style.background = '';
+  labelEl.textContent = label + '\u2026';
+
+  document.getElementById('flash-container').textContent = '';
+
+  var lines = {};
+
+  activeSource = new EventSource(url);
+
+  activeSource.addEventListener('progress', function(e) {
+    var d = JSON.parse(e.data);
+    var key = d.technology;
+    var pct = Math.round((d.index / d.total) * 100);
+
+    fill.style.width = pct + '%';
+    counter.textContent = d.index + ' / ' + d.total;
+
+    if (lines[key]) {
+      updateLine(lines[key], d);
+    } else {
+      var line = document.createElement('div');
+      line.className = 'ticker-line';
+      lines[key] = line;
+      updateLine(line, d);
+      body.appendChild(line);
+      body.scrollTop = body.scrollHeight;
+    }
+  });
+
+  activeSource.addEventListener('done', function(e) {
+    var d = JSON.parse(e.data);
+    activeSource.close();
+    activeSource = null;
+
+    fill.style.width = '100%';
+    labelEl.textContent = 'Done';
+    counter.textContent = '';
+
+    document.getElementById('flash-container').appendChild(makeFlash(d.message, 'success'));
+    document.getElementById('btn-scan').disabled = false;
+    document.getElementById('btn-fetch').disabled = false;
+
+    setTimeout(function() { location.reload(); }, 1500);
+  });
+
+  activeSource.addEventListener('error', function(e) {
+    var msg = 'Connection lost';
+    try { var d = JSON.parse(e.data); msg = d.message || msg; } catch(_) {}
+
+    if (activeSource) { activeSource.close(); activeSource = null; }
+
+    labelEl.textContent = 'Error';
+    fill.style.width = '100%';
+    fill.style.background = 'var(--accent-red)';
+
+    document.getElementById('flash-container').appendChild(makeFlash(msg, 'error'));
+    document.getElementById('btn-scan').disabled = false;
+    document.getElementById('btn-fetch').disabled = false;
+  });
+
+  activeSource.onerror = function() {
+    if (activeSource) {
+      activeSource.close();
+      activeSource = null;
+      labelEl.textContent = 'Disconnected';
+      document.getElementById('btn-scan').disabled = false;
+      document.getElementById('btn-fetch').disabled = false;
+    }
+  };
+}
+</script>
+{% endblock %}

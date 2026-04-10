@@ -106,6 +106,17 @@ def build_parser() -> argparse.ArgumentParser:
     serve = subparsers.add_parser("serve")
     serve.add_argument("--project-path")
     serve.add_argument("--project-id")
+    serve.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Also start the web dashboard in a background thread (http://127.0.0.1:8420)",
+    )
+    serve.add_argument(
+        "--dashboard-host", default="127.0.0.1", help="Dashboard bind address (default: 127.0.0.1)",
+    )
+    serve.add_argument(
+        "--dashboard-port", type=int, default=8420, help="Dashboard port (default: 8420)",
+    )
 
     schedule = subparsers.add_parser(
         "schedule",
@@ -211,6 +222,8 @@ def main() -> None:
             )
         else:
             server.service.scan()
+        if args.dashboard:
+            _start_dashboard_thread(args.base_dir, args.dashboard_host, args.dashboard_port)
         server.serve()
         return
     if args.command == "schedule":
@@ -290,6 +303,22 @@ def _run_watch_and_fetch(args: argparse.Namespace, service: DocsHubService) -> N
     except KeyboardInterrupt:
         observer.stop()
     observer.join()
+
+
+def _start_dashboard_thread(base_dir: str, host: str, port: int) -> None:
+    """Start the web dashboard in a background daemon thread."""
+    import uvicorn
+    from buonaiuto_doc4llm.dashboard import create_app
+
+    app = create_app(base_dir)
+
+    def _run() -> None:
+        uvicorn.run(app, host=host, port=port, log_level="warning")
+
+    t = threading.Thread(target=_run, daemon=True, name="dashboard")
+    t.start()
+    import sys
+    print(f"Buonaiuto Doc4LLM dashboard: http://{host}:{port}", file=sys.stderr)
 
 
 def _run_dashboard(args: argparse.Namespace) -> None:

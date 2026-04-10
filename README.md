@@ -404,11 +404,17 @@ PYTHONPATH=src python -m buonaiuto_doc4llm schedule install --hour 2 --minute 30
 PYTHONPATH=src python -m buonaiuto_doc4llm schedule status
 PYTHONPATH=src python -m buonaiuto_doc4llm schedule uninstall
 
-# Start the web dashboard (http://127.0.0.1:8420)
+# Start the web dashboard standalone (http://127.0.0.1:8420)
 PYTHONPATH=src python -m buonaiuto_doc4llm dashboard
+PYTHONPATH=src python -m buonaiuto_doc4llm dashboard --port 9000
+PYTHONPATH=src python -m buonaiuto_doc4llm dashboard --host 0.0.0.0
 
 # Start the MCP server
 PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve
+
+# Start the MCP server + dashboard together (dashboard at http://127.0.0.1:8420)
+PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve --dashboard
+PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve --dashboard --dashboard-port 9000
 ```
 
 ---
@@ -431,12 +437,23 @@ The `list_project_updates` and `ack_project_updates` tools use this to surface o
 
 ## Web dashboard
 
-Start the built-in dashboard to browse indexed docs, run queries, inspect feedback stats, and manage the fetch schedule:
+Browse indexed docs, run queries, inspect feedback stats, and manage the fetch schedule at `http://127.0.0.1:8420`.
+
+**Standalone** (dashboard only):
 
 ```bash
 PYTHONPATH=src python -m buonaiuto_doc4llm dashboard
-# Opens at http://127.0.0.1:8420
 ```
+
+**Together with the MCP server** (single command, background thread):
+
+```bash
+PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve --dashboard
+```
+
+The `--dashboard` flag starts uvicorn in a daemon thread. The MCP server continues to run on stdio unaffected. The dashboard URL is printed to stderr on startup.
+
+Custom address: `serve --dashboard --dashboard-host 0.0.0.0 --dashboard-port 9000`
 
 Requires the `dashboard` extra: `pip install -e ".[dashboard]"`.
 

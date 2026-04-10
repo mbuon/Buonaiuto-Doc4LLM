@@ -10,22 +10,32 @@ LLMs are trained on a snapshot of the internet. By the time you use them, the do
 
 Buonaiuto Doc4LLM solves this by:
 
-- Fetching official documentation from authoritative sources and storing it locally
+- **Auto-detecting your project's technologies** from `package.json`, `pyproject.toml`, `requirements.txt`, and other manifests — no manual configuration needed
+- **Fetching the missing documentation automatically** the first time it sees a library, then keeping it fresh on a daily schedule
+- **Auto-discovering unknown libraries** — if a library isn't in the built-in registry, the server finds its official docs site, downloads them, and remembers the source for next time
 - Detecting exactly what changed since the last fetch (added, updated, deleted files)
 - Serving documents to any MCP-compatible AI tool with token-budget enforcement and section-level access
 - Tracking which projects care about which technologies, so the AI only surfaces relevant updates
 - Recording quality feedback per document to surface low-quality or stale content
 
-The result is an AI assistant that reads the actual current documentation, not what it was trained on.
+The result is an AI assistant that reads the actual current documentation, not what it was trained on — with zero manual setup.
 
 ---
 
 ## How it works
 
 ```
+Your project (package.json, pyproject.toml, …)
+        │
+        │  install_project / MCP initialize
+        │  → detect technologies
+        │  → fetch missing docs automatically
+        │  → auto-discover unknown libraries
+        ▼
 Official docs websites
         │
         │  HTTP fetch (ETag / If-Modified-Since)
+        │  + linked page downloading
         ▼
 docs_center/technologies/<tech>/    ← local mirror
         │
@@ -40,7 +50,7 @@ AI coding assistant (Claude Code, Cursor, Windsurf, …)
 
 There are two layers:
 
-1. **Fetch layer** — downloads official docs via HTTP. Runs once on setup, then on a daily schedule or on demand.
+1. **Fetch layer** — on first use, auto-detects your project's libraries and downloads their docs. Subsequently keeps them fresh on a daily schedule or on demand. Works for any library — unknown ones are discovered automatically.
 2. **Serve layer** — scans the local mirror, indexes changes, answers MCP tool calls. Works fully offline after the initial fetch.
 
 ---
@@ -419,9 +429,68 @@ PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve --dashboard --dash
 
 ---
 
+## Auto project setup — zero configuration required
+
+The most powerful feature: point the server at your project and it figures out everything else automatically.
+
+### How it works
+
+When you run `install_project` (CLI or MCP tool), or when an MCP client opens a workspace, the server:
+
+1. **Detects technologies** — reads `package.json`, `pyproject.toml`, `requirements.txt`, `Pipfile`, `go.mod`, and other manifests from the project path. Maps package names to library IDs via the built-in registry (e.g. `"ai"` or `"@ai-sdk/*"` → `vercel-ai-sdk`, `"fastapi"` → `fastapi`).
+
+2. **Fetches missing documentation** — for each detected technology not yet in the local cache, downloads official docs from the authoritative source (e.g. `https://react.dev/llms-full.txt`). Uses conditional HTTP (ETag / If-Modified-Since) — sources that haven't changed are skipped.
+
+3. **Indexes everything** — SHA-256 diffs the new files and writes `added` events to SQLite so the AI immediately knows what's new.
+
+4. **Creates the project subscription** — writes `docs_center/projects/<id>.json` with the detected technology list. Future `list_project_updates` calls use this to surface only relevant changes.
+
+### CLI
+
+```bash
+PYTHONPATH=src python -m buonaiuto_doc4llm install-project /path/to/my-project
+```
+
+### MCP tool (called by the AI assistant)
+
+```json
+{"name": "install_project", "arguments": {"project_path": "/path/to/my-project"}}
+```
+
+### Auto-bootstrap on MCP initialize
+
+If your MCP client sends workspace context in the `initialize` call (Claude Code does this automatically), the entire flow runs without any manual step — the server bootstraps the project on first connection.
+
+---
+
+## Auto-discovery of unknown libraries
+
+If a project uses a library that is **not in the built-in registry**, the server does not give up. It automatically:
+
+1. Searches for the library's official documentation site
+2. Probes candidate domains for `llms-full.txt` / `llms.txt` endpoints
+3. If found, **downloads the documentation** and indexes it
+4. **Persists the new entry to `registry.json`** so future fetches work without searching again
+
+This means the server handles any library — not just the 19 built-in ones. Discovery errors are reported in `fetch_errors` in the install result and do not block the rest of the installation.
+
+---
+
+## Linked page downloading
+
+When the server fetches an `llms.txt` index file that contains markdown links to individual documentation pages, it automatically:
+
+1. Parses all `[title](url)` links from the content
+2. Filters to same-domain `.md` / `.mdx` / `.txt` / `.rst` URLs
+3. Downloads each linked page into `docs_center/technologies/<tech>/docs/<path>`
+
+This gives the AI access to the full content of every individual page — not just the index. Searching for "useState" finds the actual React hooks page, not just a mention in the `llms.txt` summary.
+
+---
+
 ## Project subscriptions
 
-Create `docs_center/projects/my-app.json` to define which technologies a project tracks:
+Create `docs_center/projects/my-app.json` to manually define which technologies a project tracks:
 
 ```json
 {
@@ -431,7 +500,9 @@ Create `docs_center/projects/my-app.json` to define which technologies a project
 }
 ```
 
-The `list_project_updates` and `ack_project_updates` tools use this to surface only relevant changes to each project.
+In practice you rarely need to write this by hand — `install_project` generates it automatically from your project's dependency manifests.
+
+The `list_project_updates` and `ack_project_updates` tools use this to surface only relevant documentation changes to each project.
 
 ---
 

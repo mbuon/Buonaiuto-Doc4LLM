@@ -628,8 +628,13 @@ Requires: `pip install -e ".[dashboard]"`
 
 #### Documents `/documents`
 - Browse every indexed document across all technologies
-- Filter by technology or search by path/content
-- Click any document to read it inline
+- Filter by technology or search by path/title
+- **Preview** button — loads the document inline at the bottom of the page without leaving the list
+- **Open** button — opens the document on its own full page (`/documents/<tech>/<path>`)
+  - **Rendered** view — Markdown rendered to HTML: headings, code blocks, tables, links all styled
+  - **Source** view — raw file content as plain text
+  - Toggle between the two views with the buttons in the top-right corner
+  - Shows technology, relative path, version, character count, and last-scanned timestamp in the header
 - Shows file size for each document
 
 #### Projects `/projects`
@@ -656,7 +661,7 @@ Requires: `pip install -e ".[dashboard]"`
 ## Running the tests
 
 ```bash
-pytest                        # all 269 tests
+pytest                        # all 274 tests
 pytest tests/test_service.py  # single file
 pytest -k test_search         # filter by name
 pytest --tb=short -q          # compact output

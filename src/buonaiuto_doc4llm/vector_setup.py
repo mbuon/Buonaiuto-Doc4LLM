@@ -88,6 +88,7 @@ def create_qdrant_retriever_and_indexer(
     # -- Qdrant local storage --
     qdrant_path = base_dir / "state" / "qdrant"
     qdrant_path.mkdir(parents=True, exist_ok=True)
+    _release_stale_qdrant_lock(qdrant_path)
 
     try:
         from qdrant_client import QdrantClient
@@ -149,6 +150,80 @@ def create_qdrant_retriever_and_indexer(
         "provider_name": provider_name,
         "qdrant_path": str(qdrant_path),
     }
+
+
+def _release_stale_qdrant_lock(qdrant_path: Path) -> None:
+    """Kill any process that holds the Qdrant lock file, then remove it.
+
+    Qdrant uses a `.lock` file under its storage directory. When the server
+    process is killed abruptly the lock is never released. This helper finds
+    the holding process (via psutil or lsof), sends SIGTERM, waits up to 3 s
+    for it to exit, and deletes the lock file so the next QdrantClient() call
+    succeeds without operator intervention.
+    """
+    import os
+    import signal
+    import time
+
+    lock_file = qdrant_path / ".lock"
+    if not lock_file.exists():
+        return
+
+    pid: int | None = None
+
+    # Prefer psutil (cross-platform)
+    try:
+        import psutil
+        for proc in psutil.process_iter(["pid", "open_files"]):
+            try:
+                for f in proc.open_files():
+                    if f.path == str(lock_file):
+                        pid = proc.pid
+                        break
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+            if pid:
+                break
+    except ImportError:
+        pass
+
+    # Fallback: lsof (macOS / Linux)
+    if pid is None:
+        import subprocess
+        try:
+            out = subprocess.check_output(
+                ["lsof", "-t", str(lock_file)],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+            if out:
+                pid = int(out.splitlines()[0])
+        except (subprocess.CalledProcessError, ValueError, FileNotFoundError):
+            pass
+
+    if pid is not None and pid != os.getpid():
+        logger.warning(
+            "Releasing stale Qdrant lock held by PID %d — terminating process", pid
+        )
+        try:
+            os.kill(pid, signal.SIGTERM)
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline:
+                time.sleep(0.1)
+                try:
+                    os.kill(pid, 0)  # still alive?
+                except ProcessLookupError:
+                    break
+            else:
+                os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    try:
+        lock_file.unlink(missing_ok=True)
+        logger.info("Qdrant lock file removed: %s", lock_file)
+    except OSError as exc:
+        logger.warning("Could not remove Qdrant lock file: %s", exc)
 
 
 def _detect_embedding_dim(provider: Any) -> int:

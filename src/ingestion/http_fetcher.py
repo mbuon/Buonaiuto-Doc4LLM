@@ -298,16 +298,24 @@ class HttpDocFetcher:
         }
 
     def _write_content(self, technology: str, url: str, content: str) -> Path:
+        from urllib.parse import unquote
         tech_dir = self.base_dir / "docs_center" / "technologies" / technology
         tech_dir.mkdir(parents=True, exist_ok=True)
 
-        # Derive filename from URL path; default to llms-full.txt for llms.txt sources
-        url_path = url.rstrip("/").rsplit("/", 1)[-1]
+        # Derive filename from URL path; URL-decode before using as a filename
+        # to prevent percent-encoded traversal sequences landing on disk.
+        raw_segment = url.rstrip("/").rsplit("/", 1)[-1]
+        url_path = unquote(raw_segment)
+        # Strip any remaining path separators — only the final filename component
+        url_path = Path(url_path).name
         suffix = Path(url_path).suffix
-        if suffix not in TEXT_EXTENSIONS:
+        if not url_path or suffix not in TEXT_EXTENSIONS:
             url_path = "llms-full.txt"
 
         dest = tech_dir / url_path
+        # Boundary check: ensure the destination stays within tech_dir
+        if not dest.resolve().is_relative_to(tech_dir.resolve()):
+            dest = tech_dir / "llms-full.txt"
         dest.write_text(content, encoding="utf-8")
         return dest
 
@@ -317,15 +325,19 @@ class HttpDocFetcher:
         manifest = {
             "display_name": mapping.library_id.replace("-", " ").title(),
         }
-        # Preserve existing manifest fields if present
+        # Preserve existing manifest fields if present.
+        # Only set display_name from the mapping if the user hasn't already
+        # customised it — prevents fetch from silently resetting manual edits.
         manifest_path = tech_dir / "manifest.json"
+        existing: dict[str, Any] = {}
         if manifest_path.exists():
             try:
                 existing = json.loads(manifest_path.read_text(encoding="utf-8"))
                 manifest = {**manifest, **existing}
             except (json.JSONDecodeError, OSError):
                 pass
-        manifest["display_name"] = _display_name_for(mapping)
+        if "display_name" not in existing:
+            manifest["display_name"] = _display_name_for(mapping)
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     # ------------------------------------------------------------------
@@ -345,6 +357,11 @@ class HttpDocFetcher:
 
         Returns (pages_fetched, pages_failed, total_bytes).
         """
+        if _requests is None:
+            raise RuntimeError(
+                "The 'requests' package is required for fetching linked pages. "
+                "Install it with: pip install requests"
+            )
         tech_dir = self.base_dir / "docs_center" / "technologies" / technology / "docs"
         tech_dir.mkdir(parents=True, exist_ok=True)
 
@@ -420,6 +437,11 @@ class HttpDocFetcher:
         to the doc file, and downloads from GitHub if the source is not
         available locally.  Returns the number of files fetched.
         """
+        if _requests is None:
+            raise RuntimeError(
+                "The 'requests' package is required for fetching template sources. "
+                "Install it with: pip install requests"
+            )
         try:
             from ingestion.template_resolver import extract_template_refs
         except ImportError:
@@ -461,11 +483,9 @@ class HttpDocFetcher:
                     try:
                         rel = resolved.relative_to(tech_dir.resolve())
                     except ValueError:
-                        # Path escapes tech_dir — compute from common parent
-                        try:
-                            rel = resolved.relative_to(tech_dir.parent.resolve())
-                        except ValueError:
-                            continue
+                        # Path escapes tech_dir — reject entirely to prevent
+                        # writes to sibling technology directories or system paths.
+                        continue
                     source_paths.add(str(rel))
 
         if not source_paths:
@@ -774,10 +794,8 @@ def _url_to_rel_path(url: str) -> str | None:
     path = unquote(parts.path).lstrip("/")
     if not path:
         return None
-    # Sanitize: no parent traversal (check decoded path)
-    if ".." in path:
-        return None
-    # Reject absolute paths
-    if path.startswith("/"):
+    # Sanitize: reject traversal attempts and null bytes.
+    # Note: path.startswith("/") is unreachable after lstrip("/") above.
+    if ".." in path or "\x00" in path:
         return None
     return path

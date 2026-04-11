@@ -133,7 +133,11 @@ def _search_for_docs_site(
     seen_domains: set[str] = set()
     candidate_urls: list[str] = []
 
-    for query in queries:
+    for i, query in enumerate(queries):
+        # Brief delay between Google scraping requests to reduce rate-limit risk.
+        if i > 0 and search_fn is None:
+            import time
+            time.sleep(1)
         results = _do_search(query, search_fn)
         for url in results:
             domain = _extract_domain(url)
@@ -187,7 +191,9 @@ def _google_search(query: str) -> list[str]:
     if not urls and len(resp.text) > 1000:
         logger.warning(
             "Google returned HTML but no parseable results for '%s' — "
-            "likely CAPTCHA or bot detection. Consider using a search API key.",
+            "likely rate-limited or CAPTCHA. This is NOT the same as 'technology not found'. "
+            "Consider setting GOOGLE_API_KEY / GOOGLE_SEARCH_ENGINE_ID env vars for "
+            "reliable search, or retry later.",
             query,
         )
     return urls
@@ -226,7 +232,10 @@ def _probe_llms_txt(candidate_base_urls: list[str], timeout: int = 15) -> list[s
                     probe_url, timeout=timeout,
                     allow_redirects=True, headers=headers,
                 )
-                if resp.status_code in (404, 405, 403):
+                # Fall back to GET only when HEAD is not supported (405) or
+                # returns 404 — not on 403 (Forbidden), which means the
+                # resource exists but access is denied.
+                if resp.status_code in (404, 405):
                     resp = _requests.get(
                         probe_url, timeout=timeout,
                         allow_redirects=True, headers=headers,
@@ -235,9 +244,33 @@ def _probe_llms_txt(candidate_base_urls: list[str], timeout: int = 15) -> list[s
                     resp.close()
                 if resp.status_code == 200:
                     content_type = resp.headers.get("Content-Type", "")
-                    if "text" in content_type or "octet-stream" in content_type:
+                    # Reject HTML responses — they are likely error pages or SPAs,
+                    # not plain-text documentation files.
+                    if "html" in content_type:
+                        logger.debug(
+                            "Skipping %s — Content-Type is HTML (%s)",
+                            probe_url, content_type,
+                        )
+                        continue
+                    # Accept plain text types; require a small GET to validate
+                    # octet-stream responses are actually text (not binary blobs).
+                    if "text" in content_type:
                         found.append(probe_url)
                         logger.info("Discovered %s for docs", probe_url)
+                    elif "octet-stream" in content_type:
+                        # Probe a small GET to confirm the payload is text
+                        try:
+                            probe_resp = _requests.get(
+                                probe_url, timeout=timeout,
+                                headers=headers, stream=True,
+                            )
+                            first_chunk = next(probe_resp.iter_content(512), b"")
+                            probe_resp.close()
+                            if first_chunk and b"\x00" not in first_chunk:
+                                found.append(probe_url)
+                                logger.info("Discovered %s for docs (octet-stream validated)", probe_url)
+                        except Exception:
+                            pass
             except Exception:
                 continue
 

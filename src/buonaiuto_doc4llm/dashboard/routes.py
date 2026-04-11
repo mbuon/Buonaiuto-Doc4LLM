@@ -134,12 +134,9 @@ def register_routes(app: FastAPI) -> None:
         libraries = service.list_supported_libraries()
         events = _get_all_events(service, limit=10)
 
-        db = service._connect()
-        try:
+        with service._connect() as db:
             project_count = db.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
             event_count = db.execute("SELECT COUNT(*) FROM update_events").fetchone()[0]
-        finally:
-            db.close()
 
         try:
             from buonaiuto_doc4llm.scheduler import schedule_status
@@ -228,13 +225,15 @@ def register_routes(app: FastAPI) -> None:
         rel_path: str,
     ) -> HTMLResponse:
         service = request.app.state.service
+        # Strip URL fragment (#anchor) — fragments are client-side only and not part of the doc path
+        rel_path = rel_path.split("#")[0]
         try:
             result = service.read_doc(technology, rel_path)
         except Exception as exc:
             return _flash_html(request, f"Could not read document: {exc}", "error")
 
         content = result.get("content", "")
-        rendered = _render_markdown(content)
+        rendered = _render_markdown(content, technology=technology)
 
         with service._connect() as db:
             row = db.execute(
@@ -397,8 +396,11 @@ def register_routes(app: FastAPI) -> None:
                         "status": "scanning",
                     })
 
+                    # Delegate to service.scan_technology() — avoids duplicating
+                    # the read-compare-write logic here and prevents duplicate
+                    # update events when concurrent scans run simultaneously.
                     summary = await asyncio.to_thread(
-                        partial(_scan_single_technology, service, tech_dir),
+                        service.scan_technology, technology,
                     )
                     docs = summary.get("documents_indexed", 0)
                     events = summary.get("events_created", 0)
@@ -500,97 +502,6 @@ def register_routes(app: FastAPI) -> None:
         """Format a single SSE event."""
         import json as _json
         return f"event: {event_type}\ndata: {_json.dumps(data)}\n\n"
-
-    def _scan_single_technology(service: Any, tech_dir: Path) -> dict[str, Any]:
-        """Scan a single technology directory. Extracted for thread offloading."""
-        technology = tech_dir.name
-        manifest = service._read_manifest(tech_dir)
-        version = manifest.get("version")
-        current_docs = service._collect_documents(tech_dir, technology, version)
-
-        with service._connect() as conn:
-            existing = {
-                (row["technology"], row["rel_path"]): row
-                for row in conn.execute(
-                    "SELECT * FROM documents WHERE technology = ?",
-                    (technology,),
-                ).fetchall()
-            }
-
-            from buonaiuto_doc4llm.service import utc_now
-            tech_events = 0
-            for record in current_docs:
-                key = (record.technology, record.rel_path)
-                previous = existing.get(key)
-                event_type = None
-
-                if previous is None:
-                    event_type = "added"
-                elif previous["checksum"] != record.checksum or previous["version"] != record.version:
-                    event_type = "updated"
-
-                conn.execute(
-                    """
-                    INSERT INTO documents (
-                        technology, rel_path, title, version, checksum, source_path, last_scanned_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(technology, rel_path) DO UPDATE SET
-                        title = excluded.title,
-                        version = excluded.version,
-                        checksum = excluded.checksum,
-                        source_path = excluded.source_path,
-                        last_scanned_at = excluded.last_scanned_at
-                    """,
-                    (
-                        record.technology, record.rel_path, record.title,
-                        record.version, record.checksum, record.source_path,
-                        utc_now(),
-                    ),
-                )
-
-                if event_type:
-                    tech_events += 1
-                    conn.execute(
-                        """
-                        INSERT INTO update_events (
-                            technology, rel_path, title, version, checksum, event_type, detected_at, source_path
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            record.technology, record.rel_path, record.title,
-                            record.version, record.checksum, event_type,
-                            utc_now(), record.source_path,
-                        ),
-                    )
-
-            # Detect deletions
-            current_keys = {(doc.technology, doc.rel_path) for doc in current_docs}
-            for key, row in existing.items():
-                if key not in current_keys:
-                    tech_events += 1
-                    conn.execute(
-                        """
-                        INSERT INTO update_events (
-                            technology, rel_path, title, version, checksum, event_type, detected_at, source_path
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            row["technology"], row["rel_path"], row["title"],
-                            row["version"], row["checksum"], "deleted",
-                            utc_now(), row["source_path"],
-                        ),
-                    )
-                    conn.execute(
-                        "DELETE FROM documents WHERE technology = ? AND rel_path = ?",
-                        (row["technology"], row["rel_path"]),
-                    )
-
-        return {
-            "technology": technology,
-            "documents_indexed": len(current_docs),
-            "events_created": tech_events,
-            "version": version,
-        }
 
     @app.post("/api/index", response_class=HTMLResponse)
     async def api_index(
@@ -733,16 +644,22 @@ def register_routes(app: FastAPI) -> None:
         except Exception as exc:
             return _flash_html(request, f"Uninstall failed: {exc}", "error")
 
-    def _render_markdown(text: str) -> str:
+    def _render_markdown(text: str, technology: str | None = None) -> str:
         """Convert Markdown text to safe HTML.
 
         Uses the ``markdown`` package when available; falls back to a plain
         <pre> block so the page is always readable.
+
+        When ``technology`` is given, rewrites relative doc links (e.g.
+        ``/docs/transformers/v5.5.0/en/model_doc/vit``) to dashboard URLs
+        (``/documents/{technology}/docs/transformers/...``) so in-doc navigation
+        stays within the dashboard and fragments are preserved.
         """
+        import re
+
         try:
             import markdown
-            import html as _html
-            return markdown.markdown(
+            html_out = markdown.markdown(
                 text,
                 extensions=["fenced_code", "tables", "nl2br", "toc"],
                 output_format="html",
@@ -750,6 +667,67 @@ def register_routes(app: FastAPI) -> None:
         except ImportError:
             import html as _html
             return f"<pre style='white-space:pre-wrap;word-break:break-word;'>{_html.escape(text)}</pre>"
+
+        # Sanitize HTML to prevent stored XSS from documentation content.
+        # Prefer nh3 (Rust-based, fast), fall back to bleach, then to a
+        # conservative tag-stripping regex as a last resort.
+        try:
+            import nh3
+            _ALLOWED_ATTRS: dict[str, set[str]] = {
+                "a": {"href", "title", "target", "rel"},
+                "img": {"src", "alt", "title", "width", "height"},
+                "code": {"class"},
+                "pre": {"class"},
+                "div": {"class", "id"},
+                "span": {"class"},
+                "th": {"align"}, "td": {"align"},
+            }
+            html_out = nh3.clean(html_out, attributes=_ALLOWED_ATTRS)
+        except ImportError:
+            try:
+                import bleach
+                from bleach.sanitizer import ALLOWED_TAGS as _BL_TAGS
+                _EXTRA_TAGS = {
+                    "p", "pre", "code", "h1", "h2", "h3", "h4", "h5", "h6",
+                    "table", "thead", "tbody", "tr", "th", "td",
+                    "img", "br", "hr", "div", "span",
+                }
+                _SAFE_ATTRS = {
+                    "a": ["href", "title"],
+                    "img": ["src", "alt", "title", "width", "height"],
+                    "code": ["class"], "pre": ["class"],
+                    "div": ["class", "id"], "span": ["class"],
+                    "th": ["align"], "td": ["align"],
+                }
+                html_out = bleach.clean(
+                    html_out,
+                    tags=set(_BL_TAGS) | _EXTRA_TAGS,
+                    attributes=_SAFE_ATTRS,
+                    strip=True,
+                )
+            except ImportError:
+                # Last resort: strip <script>, <style>, and on* event handlers
+                import re as _re
+                html_out = _re.sub(r'<script[^>]*>.*?</script>', '', html_out, flags=_re.DOTALL | _re.IGNORECASE)
+                html_out = _re.sub(r'<style[^>]*>.*?</style>', '', html_out, flags=_re.DOTALL | _re.IGNORECASE)
+                html_out = _re.sub(r'\s+on\w+="[^"]*"', '', html_out, flags=_re.IGNORECASE)
+                html_out = _re.sub(r'\s+on\w+=\'[^\']*\'', '', html_out, flags=_re.IGNORECASE)
+
+        if technology:
+            # Rewrite href values that look like absolute doc paths (start with /)
+            # but are not already dashboard URLs and not external http(s) links.
+            def _rewrite(m: re.Match) -> str:
+                href = m.group(1)
+                # Leave external links, mailto, anchors-only, and already-rewritten links alone
+                if href.startswith(("http://", "https://", "mailto:", "#", "/documents/")):
+                    return m.group(0)
+                # Strip leading slash for the rel_path portion
+                path_part = href.lstrip("/")
+                return f'href="/documents/{technology}/{path_part}"'
+
+            html_out = re.sub(r'href="([^"]*)"', _rewrite, html_out)
+
+        return html_out
 
     def _flash_html(request: Request, msg: str, flash_type: str) -> HTMLResponse:
         return _render(request, "partials/flash.html", {

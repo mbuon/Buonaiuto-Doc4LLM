@@ -202,22 +202,48 @@ def _release_stale_qdrant_lock(qdrant_path: Path) -> None:
             pass
 
     if pid is not None and pid != os.getpid():
-        logger.warning(
-            "Releasing stale Qdrant lock held by PID %d — terminating process", pid
-        )
+        # Verify the process is actually Qdrant before killing it to avoid
+        # accidentally terminating an unrelated process that happens to hold
+        # the same lock path.
+        is_qdrant = False
         try:
-            os.kill(pid, signal.SIGTERM)
-            deadline = time.monotonic() + 3.0
-            while time.monotonic() < deadline:
-                time.sleep(0.1)
-                try:
-                    os.kill(pid, 0)  # still alive?
-                except ProcessLookupError:
-                    break
-            else:
-                os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+            import psutil
+            proc = psutil.Process(pid)
+            cmdline = " ".join(proc.cmdline()).lower()
+            is_qdrant = "qdrant" in cmdline or "qdrant" in proc.name().lower()
+        except Exception:
+            # psutil unavailable or process already gone — check /proc as fallback
+            try:
+                cmdline_path = Path(f"/proc/{pid}/cmdline")
+                if cmdline_path.exists():
+                    raw = cmdline_path.read_bytes().replace(b"\x00", b" ").lower()
+                    is_qdrant = b"qdrant" in raw
+            except OSError:
+                pass
+
+        if not is_qdrant:
+            logger.warning(
+                "PID %d does not appear to be a Qdrant process — skipping kill, "
+                "removing lock file only",
+                pid,
+            )
+        else:
+            logger.warning(
+                "Releasing stale Qdrant lock held by PID %d — terminating process", pid
+            )
+            try:
+                os.kill(pid, signal.SIGTERM)
+                deadline = time.monotonic() + 3.0
+                while time.monotonic() < deadline:
+                    time.sleep(0.1)
+                    try:
+                        os.kill(pid, 0)  # still alive?
+                    except ProcessLookupError:
+                        break
+                else:
+                    os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
     try:
         lock_file.unlink(missing_ok=True)

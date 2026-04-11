@@ -349,13 +349,25 @@ def _default_seed_root() -> Path:
 
 def _sync_tree(source: Path, destination: Path) -> None:
     import tempfile
-    # Copy to temp dir first, then atomically replace to avoid data loss on failure
+    # Copy to temp dir first, then atomically replace.
+    # Keep a backup of the original so we can restore on failure — deleting
+    # destination before the rename succeeds would cause permanent data loss.
     tmp = Path(tempfile.mkdtemp(dir=destination.parent))
+    backup: Path | None = None
     try:
         shutil.copytree(source, tmp / destination.name)
         if destination.exists():
-            shutil.rmtree(destination)
+            backup = destination.parent / (destination.name + ".bak")
+            destination.rename(backup)
         (tmp / destination.name).rename(destination)
+        # Rename succeeded — discard the backup
+        if backup is not None and backup.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+    except Exception:
+        # Restore backup if the rename failed
+        if backup is not None and backup.exists() and not destination.exists():
+            backup.rename(destination)
+        raise
     finally:
         if tmp.exists():
             shutil.rmtree(tmp, ignore_errors=True)

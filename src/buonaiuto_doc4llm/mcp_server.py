@@ -29,13 +29,17 @@ class MCPServer:
             line = raw_line.strip()
             if not line:
                 continue
+            request_id = None
             try:
                 request = json.loads(line)
+                # Extract id before dispatch so error responses can include it
+                # even when handle_request raises (JSON-RPC 2.0 §5).
+                request_id = request.get("id")
                 response = self.handle_request(request)
             except Exception as exc:  # pragma: no cover
                 response = {
                     "jsonrpc": "2.0",
-                    "id": None,
+                    "id": request_id,
                     "error": {
                         "code": -32000,
                         "message": str(exc),
@@ -559,11 +563,18 @@ class MCPServer:
                 technology=arguments.get("technology"),
             )
         elif name == "submit_feedback":
+            # LLMs sometimes send "false"/"true" as strings instead of JSON booleans.
+            # bool("false") == True, so we handle the string case explicitly.
+            _raw_sat = arguments["satisfied"]
+            if isinstance(_raw_sat, str):
+                _satisfied = _raw_sat.strip().lower() not in ("false", "0", "no", "")
+            else:
+                _satisfied = bool(_raw_sat)
             payload = self.service.submit_feedback(
                 technology=arguments["technology"],
                 rel_path=arguments["rel_path"],
                 query=arguments["query"],
-                satisfied=bool(arguments["satisfied"]),
+                satisfied=_satisfied,
                 reason=arguments["reason"],
                 requester_id=arguments["requester_id"],
             )

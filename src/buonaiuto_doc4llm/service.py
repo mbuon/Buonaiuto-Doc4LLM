@@ -40,11 +40,21 @@ def _split_sections(content: str) -> list[str]:
     """
     import re
 
-    # Detect RST by checking for underline-style headings
+    # Detect RST by checking for underline-style headings.
+    # Require the underline to be at least as long as the title, and require
+    # the title line to be non-empty and not start with a YAML/Markdown
+    # marker (---) to avoid false-positives on Markdown thematic breaks and
+    # YAML front-matter.
     _RST_HEADING_RE = re.compile(
-        r'^([^\n]+)\n([=\-~^#*+]{3,})\s*$', flags=re.MULTILINE,
+        r'^([^\n\-][^\n]*)\n([=\-~^#*+]{3,})\s*$', flags=re.MULTILINE,
     )
-    is_rst = bool(_RST_HEADING_RE.search(content))
+
+    def _is_valid_rst_heading(m: re.Match) -> bool:
+        title_len = len(m.group(1).rstrip())
+        underline_len = len(m.group(2).rstrip())
+        return underline_len >= title_len
+
+    is_rst = any(_is_valid_rst_heading(m) for m in _RST_HEADING_RE.finditer(content))
 
     if is_rst:
         # Split on RST section headings (line + underline of same length)
@@ -57,7 +67,7 @@ def _split_sections(content: str) -> list[str]:
         if parts[0].strip():
             sections.append(parts[0])
         # Remaining: groups of (title, underline, body)
-        for i in range(1, len(parts) - 1, 3):
+        for i in range(1, len(parts), 3):
             title = parts[i] if i < len(parts) else ""
             underline = parts[i + 1] if i + 1 < len(parts) else ""
             body = parts[i + 2] if i + 2 < len(parts) else ""
@@ -66,8 +76,10 @@ def _split_sections(content: str) -> list[str]:
                 sections.append(section_text)
         return sections if sections else [content]
 
-    # Markdown: mask fenced code blocks so their # lines aren't treated as headings
-    _FENCE_RE = re.compile(r'^(`{3,}|~{3,}).*?\n(.*?)\n\1', flags=re.MULTILINE | re.DOTALL)
+    # Markdown: mask fenced code blocks so their # lines aren't treated as headings.
+    # The closing fence must appear at the start of a line (^ in MULTILINE) and
+    # match the exact same fence character sequence as the opening fence.
+    _FENCE_RE = re.compile(r'^(`{3,}|~{3,})[^\n]*\n(.*?)\n^\1\s*$', flags=re.MULTILINE | re.DOTALL)
 
     masked = content
     replacements: list[tuple[str, str]] = []
@@ -201,7 +213,9 @@ def _detect_locale(content: str) -> str:
         hits = 0
         for m in markers:
             if len(m) <= 4:
-                if re.search(rf"\b{re.escape(m)}\b", text):
+                # re.UNICODE makes \b respect non-ASCII word boundaries so
+                # e.g. "und" doesn't match inside "thundered".
+                if re.search(rf"\b{re.escape(m)}\b", text, re.UNICODE):
                     hits += 1
             else:
                 if m in text:
@@ -605,6 +619,103 @@ class DocsHubService:
             "total_events": sum(s["events_created"] for s in summaries),
         }
 
+    def scan_technology(self, technology: str) -> dict[str, Any]:
+        """Scan a single technology directory and return its summary.
+
+        Delegates to the same logic as ``scan()`` for one technology so that
+        callers (e.g. the SSE route) don't duplicate the read-compare-write
+        cycle and risk creating duplicate update events on concurrent runs.
+        """
+        tech_dir = self.technologies_root / technology
+        if not tech_dir.is_dir():
+            raise ValueError(f"Technology directory not found: {technology}")
+        manifest = self._read_manifest(tech_dir)
+        version = manifest.get("version")
+        current_docs = self._collect_documents(tech_dir, technology, version)
+
+        with self._connect() as conn:
+            existing = {
+                (row["technology"], row["rel_path"]): row
+                for row in conn.execute(
+                    "SELECT * FROM documents WHERE technology = ?",
+                    (technology,),
+                ).fetchall()
+            }
+
+            tech_events = 0
+            for record in current_docs:
+                key = (record.technology, record.rel_path)
+                previous = existing.get(key)
+                event_type = None
+                if previous is None:
+                    event_type = "added"
+                elif previous["checksum"] != record.checksum or previous["version"] != record.version:
+                    event_type = "updated"
+
+                conn.execute(
+                    """
+                    INSERT INTO documents (
+                        technology, rel_path, title, version, checksum, source_path, last_scanned_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(technology, rel_path) DO UPDATE SET
+                        title = excluded.title,
+                        version = excluded.version,
+                        checksum = excluded.checksum,
+                        source_path = excluded.source_path,
+                        last_scanned_at = excluded.last_scanned_at
+                    """,
+                    (
+                        record.technology, record.rel_path, record.title,
+                        record.version, record.checksum, record.source_path,
+                        utc_now(),
+                    ),
+                )
+                if event_type:
+                    tech_events += 1
+                    conn.execute(
+                        """
+                        INSERT INTO update_events (
+                            technology, rel_path, title, version, checksum, event_type, detected_at, source_path
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            record.technology, record.rel_path, record.title,
+                            record.version, record.checksum, event_type,
+                            utc_now(), record.source_path,
+                        ),
+                    )
+
+            current_keys = {(doc.technology, doc.rel_path) for doc in current_docs}
+            for key, row in existing.items():
+                if key not in current_keys:
+                    tech_events += 1
+                    conn.execute(
+                        """
+                        INSERT INTO update_events (
+                            technology, rel_path, title, version, checksum, event_type, detected_at, source_path
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            row["technology"], row["rel_path"], row["title"],
+                            row["version"], row["checksum"], "deleted",
+                            utc_now(), row["source_path"],
+                        ),
+                    )
+                    conn.execute(
+                        "DELETE FROM documents WHERE technology = ? AND rel_path = ?",
+                        (row["technology"], row["rel_path"]),
+                    )
+
+        if self.indexer is not None and tech_events > 0:
+            self.indexer.index_technology(technology)
+
+        return {
+            "technology": technology,
+            "documents_indexed": len(current_docs),
+            "events_created": tech_events,
+            "version": version,
+        }
+
     def sync_projects(self) -> list[dict[str, Any]]:
         if not self.projects_root.exists():
             return []
@@ -751,6 +862,13 @@ class DocsHubService:
 
     def ack_project_updates(self, project_id: str, through_event_id: int | None = None) -> int:
         with self._connect() as conn:
+            # Validate project exists — consistent with list_project_updates behaviour
+            exists = conn.execute(
+                "SELECT 1 FROM projects WHERE project_id = ?", (project_id,)
+            ).fetchone()
+            if exists is None:
+                raise ValueError(f"Unknown project_id: {project_id}")
+
             if through_event_id is None:
                 row = conn.execute(
                     """
@@ -769,7 +887,7 @@ class DocsHubService:
                 INSERT INTO project_cursors(project_id, last_seen_event_id)
                 VALUES (?, ?)
                 ON CONFLICT(project_id) DO UPDATE SET
-                    last_seen_event_id = excluded.last_seen_event_id
+                    last_seen_event_id = MAX(last_seen_event_id, excluded.last_seen_event_id)
                 """,
                 (project_id, through_event_id),
             )
@@ -786,18 +904,26 @@ class DocsHubService:
         from posixpath import normpath, dirname, join as pjoin
         doc_dir = dirname(rel_path)
 
+        def _path_variants(p: str) -> list[str]:
+            """Return path and its .md-extension variant."""
+            variants = [p]
+            if not any(p.endswith(ext) for ext in (".md", ".mdx", ".txt", ".rst")):
+                variants.append(p + ".md")
+            return variants
+
         related: list[dict[str, Any]] = []
         seen_paths: set[str] = set()
         with self._connect() as conn:
             for link in raw_links:
                 if len(related) >= limit:
                     break
-                # Try multiple resolution strategies
-                candidates = [
+                # Try multiple resolution strategies, each with and without .md
+                base_candidates = [
                     normpath(pjoin(doc_dir, link["path"])),  # relative
                     link["path"],  # as-is (for URL-derived paths)
                     f"docs/{link['path']}",  # under docs/ prefix
                 ]
+                candidates = [v for base in base_candidates for v in _path_variants(base)]
                 for candidate in candidates:
                     if candidate in seen_paths:
                         continue
@@ -824,15 +950,30 @@ class DocsHubService:
         query: str | None = None,
         section: str | None = None,
     ) -> dict[str, Any]:
+        # Normalize rel_path: strip URL fragment and try canonical path variants
+        rel_path = rel_path.split("#")[0].rstrip("/")
         with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT title, version, source_path, last_scanned_at
-                FROM documents
-                WHERE technology = ? AND rel_path = ?
-                """,
-                (technology, rel_path),
-            ).fetchone()
+            # Try exact match first, then with .md extension appended, then strip .md
+            candidates = [rel_path]
+            if not any(rel_path.endswith(ext) for ext in (".md", ".mdx", ".txt", ".rst")):
+                candidates.append(rel_path + ".md")
+            elif rel_path.endswith(".md"):
+                candidates.append(rel_path[:-3])  # without extension
+
+            row = None
+            for candidate in candidates:
+                row = conn.execute(
+                    """
+                    SELECT title, version, source_path, last_scanned_at
+                    FROM documents
+                    WHERE technology = ? AND rel_path = ?
+                    """,
+                    (technology, candidate),
+                ).fetchone()
+                if row is not None:
+                    rel_path = candidate
+                    break
+
             if row is None:
                 raise ValueError(f"Unknown document: {technology}/{rel_path}")
 
@@ -1019,16 +1160,24 @@ class DocsHubService:
         """List documents for a technology, optionally filtered by path prefix."""
         with self._connect() as conn:
             if path_prefix:
+                # Escape LIKE wildcards in the caller-supplied prefix to prevent
+                # pattern injection (e.g. "docs/20%" would otherwise match anything).
+                escaped_prefix = (
+                    path_prefix
+                    .replace("\\", "\\\\")
+                    .replace("%", r"\%")
+                    .replace("_", r"\_")
+                )
                 rows = conn.execute(
                     """
                     SELECT technology, rel_path, title, version,
                            last_scanned_at, source_path
                     FROM documents
-                    WHERE technology = ? AND rel_path LIKE ?
+                    WHERE technology = ? AND rel_path LIKE ? ESCAPE '\\'
                     ORDER BY rel_path
                     LIMIT ?
                     """,
-                    (technology, f"{path_prefix}%", limit),
+                    (technology, f"{escaped_prefix}%", limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -1230,8 +1379,15 @@ class DocsHubService:
                         filtered_rows.append(row)
                 rows = filtered_rows
 
+            # Per-file and total-budget caps to prevent OOM on large corpora.
+            _MAX_FILE_BYTES = 500_000   # skip files larger than 500 KB
+            _MAX_TOTAL_BYTES = 50_000_000  # stop loading after 50 MB total
+            _total_loaded = 0
+
             documents = []
             for row in rows:
+                if _total_loaded >= _MAX_TOTAL_BYTES:
+                    break
                 source = Path(row["source_path"])
                 # Skip monolith files that have been split into individual
                 # topic pages — the split directory shares the stem name.
@@ -1240,9 +1396,12 @@ class DocsHubService:
                     if split_dir.is_dir() and any(split_dir.iterdir()):
                         continue
                 try:
+                    if source.stat().st_size > _MAX_FILE_BYTES:
+                        continue
                     content = source.read_text(encoding="utf-8")
                 except OSError:
                     continue
+                _total_loaded += len(content)
                 documents.append(
                     RetrievalDocument(
                         workspace_id=workspace_id,
@@ -1256,45 +1415,36 @@ class DocsHubService:
                 )
             retrieval = self.retriever.search(documents, rq)
 
-        # Enrich results with file sizes and freshness from the DB
+        # Enrich results with file sizes, freshness, and checksums from the DB.
+        # Use a single connection and batch all lookups to avoid N+1 opens.
         doc_meta: dict[tuple[str, str], dict[str, Any]] = {}
-        match_keys = [(m.library_id, m.rel_path) for m in retrieval.matches]
+        checksum_map: dict[tuple[str, str], str] = {}
+        match_keys = list({(m.library_id, m.rel_path) for m in retrieval.matches})
         if match_keys:
             with self._connect() as conn:
                 for tech, rp in match_keys:
-                    if (tech, rp) in doc_meta:
-                        continue
-                    meta_row = conn.execute(
-                        "SELECT source_path, last_scanned_at FROM documents WHERE technology = ? AND rel_path = ?",
+                    row = conn.execute(
+                        "SELECT source_path, last_scanned_at, checksum FROM documents WHERE technology = ? AND rel_path = ?",
                         (tech, rp),
                     ).fetchone()
-                    if meta_row:
+                    if row:
+                        # Read actual character count (not byte size) for accurate budgeting
                         try:
-                            char_count = Path(meta_row["source_path"]).stat().st_size
+                            char_count = len(Path(row["source_path"]).read_text(encoding="utf-8", errors="replace"))
                         except OSError:
                             char_count = 0
                         doc_meta[(tech, rp)] = {
                             "char_count": char_count,
-                            "last_scanned_at": meta_row["last_scanned_at"],
+                            "last_scanned_at": row["last_scanned_at"],
                         }
+                        if row["checksum"]:
+                            checksum_map[(tech, rp)] = row["checksum"]
 
         # Deduplicate search results by (technology, rel_path) AND by content
         # checksum (catches monolith files indexed at multiple paths).
         seen_docs: set[tuple[str, str]] = set()
         seen_checksums: set[str] = set()
         results: list[dict[str, Any]] = []
-
-        # Build checksum lookup for dedup
-        checksum_map: dict[tuple[str, str], str] = {}
-        if retrieval.matches:
-            with self._connect() as conn:
-                for match in retrieval.matches:
-                    row = conn.execute(
-                        "SELECT checksum FROM documents WHERE technology = ? AND rel_path = ?",
-                        (match.library_id, match.rel_path),
-                    ).fetchone()
-                    if row:
-                        checksum_map[(match.library_id, match.rel_path)] = row["checksum"]
 
         for match in retrieval.matches:
             key = (match.library_id, match.rel_path)
@@ -1338,12 +1488,22 @@ class DocsHubService:
                             "FROM documents WHERE technology = ? LIMIT 200",
                             (lib_id,),
                         ).fetchall()
+                    # Same byte caps as the main lexical path to prevent OOM.
+                    _sub_max_file = 500_000
+                    _sub_total = 0
+                    _sub_total_cap = 50_000_000
                     sub_docs = []
                     for row in sub_rows:
+                        if _sub_total >= _sub_total_cap:
+                            break
                         try:
-                            content = Path(row["source_path"]).read_text(encoding="utf-8")
+                            src = Path(row["source_path"])
+                            if src.stat().st_size > _sub_max_file:
+                                continue
+                            content = src.read_text(encoding="utf-8")
                         except OSError:
                             continue
+                        _sub_total += len(content)
                         sub_docs.append(RetrievalDocument(
                             workspace_id=workspace_id, library_id=row["technology"],
                             version=row["version"], rel_path=row["rel_path"],
@@ -1797,7 +1957,10 @@ class DocsHubService:
                 continue
             if path.suffix.lower() not in TEXT_EXTENSIONS:
                 continue
-            content = path.read_text(encoding="utf-8")
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
             rel_path = path.relative_to(tech_dir).as_posix()
             docs.append(
                 DocumentRecord(
@@ -1806,7 +1969,7 @@ class DocsHubService:
                     title=extract_title(path, content),
                     version=version,
                     checksum=sha256_text(content),
-                    source_path=str(path),
+                    source_path=str(path.resolve()),  # resolve symlinks at scan time
                 )
             )
         return docs

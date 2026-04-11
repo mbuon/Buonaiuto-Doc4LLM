@@ -56,7 +56,10 @@ def create_app(base_dir: Path | str) -> FastAPI:
     app = FastAPI(title="Buonaiuto Doc4LLM", docs_url=None, redoc_url=None)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+    from jinja2 import select_autoescape
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+    # Enable autoescape for all HTML templates to prevent XSS.
+    templates.env.autoescape = select_autoescape(["html", "htm"])
     templates.env.filters["filesizeformat"] = filesizeformat
 
     # Attach to app state for routes

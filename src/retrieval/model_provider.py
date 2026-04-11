@@ -111,10 +111,27 @@ class ModelProviderRouter:
         return {"provider": provider.name, "embedding_status": "ready", "vectors": vectors}
 
 
+_DETERMINISTIC_DIM = 384  # Must match the Qdrant collection dimension
+
+
 def _text_to_vector(text: str) -> list[float]:
-    digest = hashlib.sha256(text.encode("utf-8")).digest()
-    return [
-        round(int.from_bytes(digest[0:4], "big") / 0xFFFFFFFF, 6),
-        round(int.from_bytes(digest[4:8], "big") / 0xFFFFFFFF, 6),
-        round(int.from_bytes(digest[8:12], "big") / 0xFFFFFFFF, 6),
-    ]
+    """Produce a deterministic pseudo-embedding of dimension _DETERMINISTIC_DIM.
+
+    The original 3-element implementation was incompatible with Qdrant collections
+    created with size=384.  We now tile SHA-256 digests to fill the required
+    dimension, then L2-normalise the result so cosine similarity is meaningful.
+    """
+    import math
+    result: list[float] = []
+    seed = text.encode("utf-8")
+    i = 0
+    while len(result) < _DETERMINISTIC_DIM:
+        digest = hashlib.sha256(seed + i.to_bytes(4, "big")).digest()
+        for offset in range(0, 32, 4):
+            if len(result) >= _DETERMINISTIC_DIM:
+                break
+            result.append(int.from_bytes(digest[offset:offset + 4], "big") / 0xFFFFFFFF)
+        i += 1
+    # L2-normalise
+    norm = math.sqrt(sum(v * v for v in result)) or 1.0
+    return [round(v / norm, 6) for v in result]

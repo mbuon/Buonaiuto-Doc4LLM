@@ -16,7 +16,11 @@ def chunk_markdown(text: str, target_max_words: int = 600, absolute_max_words: i
 
     chunks: list[str] = []
     current: list[str] = []
-    in_code_fence = False
+    # Track the opening fence character ("`" or "~") so only a matching
+    # closing fence ends the block.  A simple bool toggle would flip on
+    # unrelated fence lines when the opening/closing chars differ or when
+    # a document contains an odd number of fence markers (malformed input).
+    fence_char: str | None = None
 
     def flush_current() -> None:
         nonlocal current
@@ -27,11 +31,20 @@ def chunk_markdown(text: str, target_max_words: int = 600, absolute_max_words: i
 
     for line in lines:
         stripped = line.strip()
-        # Support both ``` and ~~~ code fences
+        # Support both ``` and ~~~ code fences; match only the opening char
         if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_code_fence = not in_code_fence
+            ch = stripped[0]
+            if fence_char is None:
+                # Opening fence
+                fence_char = ch
+            elif ch == fence_char:
+                # Matching closing fence
+                fence_char = None
+            # else: different fence char inside a fence — treat as content
             current.append(line)
             continue
+
+        in_code_fence = fence_char is not None
 
         if not in_code_fence and stripped.startswith("# "):
             if current:
@@ -47,7 +60,7 @@ def chunk_markdown(text: str, target_max_words: int = 600, absolute_max_words: i
         elif wc >= absolute_max_words:
             # Force flush even inside code fences to prevent unbounded chunks
             flush_current()
-            in_code_fence = False  # Reset fence state to avoid orphaned fence
+            fence_char = None  # Reset fence state to avoid orphaned fence
 
     flush_current()
     return chunks

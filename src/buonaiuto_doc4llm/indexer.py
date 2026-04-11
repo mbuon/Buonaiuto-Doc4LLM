@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,10 @@ class DocIndexer:
         self.qdrant_client = qdrant_client
         self.embedder = embedder
         self.workspace_id = workspace_id
+        # Per-technology locks prevent interleaved Qdrant upserts from concurrent
+        # scan_technology() calls, which can corrupt a local file-backed collection.
+        self._tech_locks: dict[str, threading.Lock] = {}
+        self._locks_mutex = threading.Lock()
 
     def index_technology(
         self,
@@ -72,6 +77,21 @@ class DocIndexer:
         if not tech_dir.exists():
             return {"technology": technology, "chunks_indexed": 0, "points_upserted": 0}
 
+        with self._locks_mutex:
+            if technology not in self._tech_locks:
+                self._tech_locks[technology] = threading.Lock()
+            tech_lock = self._tech_locks[technology]
+
+        with tech_lock:
+            return self._index_technology_locked(technology, tech_dir, rel_paths)
+
+    def _index_technology_locked(
+        self,
+        technology: str,
+        tech_dir: Path,
+        rel_paths: list[str] | None,
+    ) -> dict[str, Any]:
+        """Inner implementation of index_technology — called with the per-technology lock held."""
         files = self._collect_files(tech_dir, rel_paths)
         if not files:
             return {"technology": technology, "chunks_indexed": 0, "points_upserted": 0}

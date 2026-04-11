@@ -67,10 +67,30 @@ def resolve_templates(content: str, doc_path: Path) -> str:
     """
     doc_dir = doc_path.parent
 
+    # Establish a safe read boundary at the technology root level.
+    # Template references legitimately traverse up from docs/ to source
+    # directories (e.g. `../../docs_src/...`), so we allow reads within
+    # the tech root (doc_path's great-grandparent: docs_center/technologies/<tech>/).
+    # We resolve once to follow symlinks before comparison.
+    # Heuristic: walk up from doc_dir until we find the "technologies" parent,
+    # or fall back to 4 levels up as a reasonable bound.
+    def _find_safe_root(path: Path) -> Path:
+        for ancestor in path.parents:
+            if ancestor.name == "technologies":
+                return ancestor
+        # Fallback: 4 levels up from doc_dir (covers docs/tutorial/guide.md)
+        levels_up = min(4, len(path.parts) - 1)
+        return Path(*path.parts[:-levels_up]) if levels_up else path
+    safe_root = _find_safe_root(doc_dir.resolve())
+
     def _replace(match: re.Match) -> str:
         raw_path = match.group("path")
         highlight = match.group("highlight")
         source_path = (doc_dir / raw_path).resolve()
+
+        # Block path traversal: reject any resolved path that escapes the tech root
+        if not source_path.is_relative_to(safe_root):
+            return f"<!-- code reference: {raw_path} (blocked: path outside technology root) -->"
 
         if not source_path.is_file():
             return f"<!-- code reference: {raw_path} (not available locally) -->"

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Buonaiuto Doc4LLM &middot; {{ technology }}/{{ rel_path }}{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+  <div>
+    <div class="page-title" style="font-size:1rem; font-weight:600;">
+      <a href="/documents?technology={{ technology | urlencode }}" class="text-secondary" style="text-decoration:none;">{{ technology }}</a>
+      <span class="text-secondary"> / </span>{{ rel_path }}
+    </div>
+    <div class="page-subtitle">
+      {% if version %}version {{ version }} &nbsp;·&nbsp;{% endif %}
+      {{ char_count | default(0) | int }} chars
+      &nbsp;·&nbsp; last scanned {{ last_scanned_at[:19] if last_scanned_at else "—" }}
+    </div>
+  </div>
+  <div style="margin-left:auto; display:flex; gap:8px; flex-wrap:wrap;">
+    <button id="btn-rendered" class="btn btn-primary btn-sm" onclick="showRendered()">Rendered</button>
+    <button id="btn-source" class="btn btn-sm" onclick="showSource()">Source</button>
+    <a href="/documents?technology={{ technology | urlencode }}" class="btn btn-sm">&larr; Back</a>
+  </div>
+</div>
+
+<!-- Rendered view (Markdown → HTML) -->
+<div id="view-rendered" class="card" style="display:block;">
+  <div class="card-body">
+    <div class="doc-rendered prose">{{ rendered | safe }}</div>
+  </div>
+</div>
+
+<!-- Raw source view -->
+<div id="view-source" class="card" style="display:none;">
+  <div class="card-body">
+    <pre class="doc-content" style="white-space:pre-wrap; word-break:break-word;">{{ content }}</pre>
+  </div>
+</div>
+
+<script>
+function showRendered() {
+  document.getElementById('view-rendered').style.display = 'block';
+  document.getElementById('view-source').style.display = 'none';
+  document.getElementById('btn-rendered').className = 'btn btn-primary btn-sm';
+  document.getElementById('btn-source').className = 'btn btn-sm';
+}
+function showSource() {
+  document.getElementById('view-rendered').style.display = 'none';
+  document.getElementById('view-source').style.display = 'block';
+  document.getElementById('btn-rendered').className = 'btn btn-sm';
+  document.getElementById('btn-source').className = 'btn btn-primary btn-sm';
+}
+</script>
+{% endblock %}

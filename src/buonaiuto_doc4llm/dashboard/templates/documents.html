@@ -54,13 +54,18 @@
           <td>{{ doc.title or "—" }}</td>
           <td class="text-secondary">{{ doc.version or "—" }}</td>
           <td class="text-secondary nowrap">{{ doc.last_scanned_at[:19] if doc.last_scanned_at else "—" }}</td>
-          <td>
+          <td style="white-space:nowrap; display:flex; gap:4px;">
             <button class="btn btn-sm"
                     hx-get="/api/read-doc?technology={{ doc.technology | urlencode }}&amp;rel_path={{ doc.rel_path | urlencode }}"
                     hx-target="#doc-viewer"
                     hx-swap="innerHTML">
-              Read
+              Preview
             </button>
+            <a class="btn btn-sm btn-primary"
+               href="/documents/{{ doc.technology | urlencode }}/{{ doc.rel_path | urlencode }}"
+               target="_blank">
+              Open
+            </a>
           </td>
         </tr>
         {% endfor %}

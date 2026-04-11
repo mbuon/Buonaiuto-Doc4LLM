@@ -221,6 +221,41 @@ def register_routes(app: FastAPI) -> None:
         )
         return _render(request, "documents.html", ctx)
 
+    @app.get("/documents/{technology}/{rel_path:path}", response_class=HTMLResponse)
+    async def document_page(
+        request: Request,
+        technology: str,
+        rel_path: str,
+    ) -> HTMLResponse:
+        service = request.app.state.service
+        try:
+            result = service.read_doc(technology, rel_path)
+        except Exception as exc:
+            return _flash_html(request, f"Could not read document: {exc}", "error")
+
+        content = result.get("content", "")
+        rendered = _render_markdown(content)
+
+        with service._connect() as db:
+            row = db.execute(
+                "SELECT version, last_scanned_at, char_count FROM documents WHERE technology=? AND rel_path=?",
+                (technology, rel_path),
+            ).fetchone()
+        meta = dict(row) if row else {}
+
+        ctx = _ctx(
+            request,
+            "documents",
+            technology=technology,
+            rel_path=rel_path,
+            content=content,
+            rendered=rendered,
+            version=meta.get("version"),
+            last_scanned_at=meta.get("last_scanned_at"),
+            char_count=meta.get("char_count") or len(content),
+        )
+        return _render(request, "doc_page.html", ctx)
+
     @app.get("/projects", response_class=HTMLResponse)
     async def projects(
         request: Request,
@@ -697,6 +732,24 @@ def register_routes(app: FastAPI) -> None:
             return _flash_html(request, "Schedule was not installed", "info")
         except Exception as exc:
             return _flash_html(request, f"Uninstall failed: {exc}", "error")
+
+    def _render_markdown(text: str) -> str:
+        """Convert Markdown text to safe HTML.
+
+        Uses the ``markdown`` package when available; falls back to a plain
+        <pre> block so the page is always readable.
+        """
+        try:
+            import markdown
+            import html as _html
+            return markdown.markdown(
+                text,
+                extensions=["fenced_code", "tables", "nl2br", "toc"],
+                output_format="html",
+            )
+        except ImportError:
+            import html as _html
+            return f"<pre style='white-space:pre-wrap;word-break:break-word;'>{_html.escape(text)}</pre>"
 
     def _flash_html(request: Request, msg: str, flash_type: str) -> HTMLResponse:
         return _render(request, "partials/flash.html", {

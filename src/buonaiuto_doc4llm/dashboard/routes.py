@@ -238,7 +238,7 @@ def register_routes(app: FastAPI) -> None:
 
         with service._connect() as db:
             row = db.execute(
-                "SELECT version, last_scanned_at, char_count FROM documents WHERE technology=? AND rel_path=?",
+                "SELECT version, last_scanned_at FROM documents WHERE technology=? AND rel_path=?",
                 (technology, rel_path),
             ).fetchone()
         meta = dict(row) if row else {}
@@ -252,7 +252,7 @@ def register_routes(app: FastAPI) -> None:
             rendered=rendered,
             version=meta.get("version"),
             last_scanned_at=meta.get("last_scanned_at"),
-            char_count=meta.get("char_count") or len(content),
+            char_count=len(content),
         )
         return _render(request, "doc_page.html", ctx)
 

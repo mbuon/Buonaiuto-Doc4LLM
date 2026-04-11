@@ -8,17 +8,15 @@
 </div>
 
 <div class="filters">
-  <form method="get" action="/documents" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-    <select name="technology" class="input" style="width: 180px;"
-            onchange="this.form.submit()">
+  <form method="get" action="/documents" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+    <select name="technology" class="input" style="width:180px;" onchange="this.form.submit()">
       <option value="">All technologies</option>
       {% for tech in all_technologies %}
       <option value="{{ tech }}" {% if tech == current_tech %}selected{% endif %}>{{ tech }}</option>
       {% endfor %}
     </select>
-    <input type="text" name="q" class="input" style="min-width: 280px;"
-           placeholder="Search documents..."
-           value="{{ query or '' }}">
+    <input type="text" name="q" class="input" style="min-width:220px; flex:1;"
+           placeholder="Search documents…" value="{{ query or '' }}">
     <button type="submit" class="btn btn-primary">Search</button>
     {% if query or current_tech %}
     <a href="/documents" class="btn">Clear</a>
@@ -34,8 +32,16 @@
     </span>
     <span class="text-secondary text-sm">{{ documents | length }} results</span>
   </div>
-  <div class="card-body-flush table-wrap">
-    <table>
+  <div class="card-body-flush" style="overflow-x:auto;">
+    <table style="width:100%; table-layout:fixed;">
+      <colgroup>
+        <col style="width:120px;">   <!-- Technology -->
+        <col style="width:auto;">    <!-- Path (takes remaining space) -->
+        <col style="width:180px;">   <!-- Title -->
+        <col style="width:72px;">    <!-- Version -->
+        <col style="width:140px;">   <!-- Last Scanned -->
+        <col style="width:120px;">   <!-- Actions -->
+      </colgroup>
       <thead>
         <tr>
           <th>Technology</th>
@@ -49,12 +55,18 @@
       <tbody>
         {% for doc in documents %}
         <tr>
-          <td><span class="badge badge-green">{{ doc.technology }}</span></td>
-          <td class="mono">{{ doc.rel_path }}</td>
-          <td>{{ doc.title or "—" }}</td>
-          <td class="text-secondary">{{ doc.version or "—" }}</td>
-          <td class="text-secondary nowrap">{{ doc.last_scanned_at[:19] if doc.last_scanned_at else "—" }}</td>
-          <td style="white-space:nowrap; display:flex; gap:4px;">
+          <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            <span class="badge badge-green">{{ doc.technology }}</span>
+          </td>
+          <td class="mono" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+              title="{{ doc.rel_path }}">{{ doc.rel_path }}</td>
+          <td style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+              title="{{ doc.title or '' }}">{{ doc.title or "—" }}</td>
+          <td class="text-secondary" style="white-space:nowrap;">{{ doc.version or "—" }}</td>
+          <td class="text-secondary" style="white-space:nowrap; font-size:11px;">
+            {{ doc.last_scanned_at[:19] if doc.last_scanned_at else "—" }}
+          </td>
+          <td style="white-space:nowrap;">
             <button class="btn btn-sm"
                     hx-get="/api/read-doc?technology={{ doc.technology | urlencode }}&amp;rel_path={{ doc.rel_path | urlencode }}"
                     hx-target="#doc-viewer"
@@ -63,9 +75,7 @@
             </button>
             <a class="btn btn-sm btn-primary"
                href="/documents/{{ doc.technology | urlencode }}/{{ doc.rel_path | urlencode }}"
-               target="_blank">
-              Open
-            </a>
+               target="_blank">Open</a>
           </td>
         </tr>
         {% endfor %}
@@ -79,5 +89,5 @@
   </div>
 </div>
 
-<div id="doc-viewer"></div>
+<div id="doc-viewer" style="margin-top:16px;"></div>
 {% endblock %}

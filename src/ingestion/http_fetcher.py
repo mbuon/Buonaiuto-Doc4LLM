@@ -41,27 +41,18 @@ _ERROR_PAGE_SIGNATURES = [
 
 
 def _validate_fetched_content(content: str, url: str) -> None:
-    """Reject content that looks like an error page instead of documentation.
+    """Reject content that is HTML instead of plain-text documentation.
 
-    Raises RuntimeError if content appears to be HTML error page, Cloudflare
-    challenge, or other non-documentation response.
+    Raises RuntimeError if the response is an HTML document — whether an error
+    page, a JavaScript SPA, a Cloudflare challenge, or any other HTML response.
+    LLM documentation files must be plain text (Markdown, RST, JSON, etc.).
     """
-    # Check first 2000 chars for error signatures
-    sample = content[:2000]
-
-    # If it starts with HTML tags and has error signatures, reject
-    stripped = sample.lstrip()
-    looks_like_html = stripped.startswith(("<!", "<html", "<HTML"))
-
-    if looks_like_html:
-        sample_lower = sample.lower()
-        for sig in _ERROR_PAGE_SIGNATURES:
-            if sig.lower() in sample_lower:
-                raise RuntimeError(
-                    f"Content from {url} appears to be an HTML error page "
-                    f"(matched: '{sig}'), not documentation. "
-                    f"First 200 chars: {content[:200]!r}"
-                )
+    stripped = content[:2000].lstrip()
+    if stripped.lower().startswith(("<!doctype", "<html")):
+        raise RuntimeError(
+            f"Content from {url} is an HTML document, not plain-text documentation. "
+            f"First 200 chars: {content[:200]!r}"
+        )
 
 
 def _utc_now() -> str:

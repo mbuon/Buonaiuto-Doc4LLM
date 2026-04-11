@@ -92,8 +92,7 @@
       "display_name": "SQLAlchemy",
       "package_names": ["sqlalchemy", "SQLAlchemy"],
       "sources": [
-        "https://docs.sqlalchemy.org/llms-full.txt",
-        "https://docs.sqlalchemy.org/llms.txt"
+        "github://sqlalchemy/sqlalchemy/main/doc/build"
       ]
     },
     {
@@ -111,8 +110,7 @@
       "display_name": "LangChain",
       "package_names": ["langchain", "langchain-core", "langchain-community"],
       "sources": [
-        "https://python.langchain.com/llms-full.txt",
-        "https://python.langchain.com/llms.txt"
+        "https://raw.githubusercontent.com/langchain-ai/langchain/master/README.md"
       ]
     },
     {
@@ -130,11 +128,8 @@
       "display_name": "Anthropic SDK",
       "package_names": ["anthropic"],
       "sources": [
-        "https://docs.anthropic.com/en/docs/llms-full.txt",
-        "https://docs.anthropic.com/en/docs/llms.txt",
-        "https://docs.anthropic.com/llms-full.txt",
-        "https://docs.anthropic.com/llms.txt",
-        "https://raw.githubusercontent.com/anthropics/anthropic-sdk-python/main/README.md"
+        "https://raw.githubusercontent.com/anthropics/anthropic-sdk-python/main/README.md",
+        "github://anthropics/anthropic-sdk-python/main/docs"
       ]
     },
     {

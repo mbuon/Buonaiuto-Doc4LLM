@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -17,6 +18,12 @@ try:
     from buonaiuto_doc4llm.indexer import DocIndexer as _DocIndexer
 except ImportError:  # pragma: no cover
     _DocIndexer = None  # type: ignore[assignment,misc]
+
+# Optional: requests is used by _probe_llms_txt / resolve_observed_packages
+try:
+    import requests  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover
+    requests = None  # type: ignore[assignment]
 
 
 TEXT_EXTENSIONS = {".md", ".mdx", ".txt", ".rst", ".json"}
@@ -469,6 +476,17 @@ class DocsHubService:
                     reason        TEXT    NOT NULL,
                     requester_id  TEXT    NOT NULL,
                     created_at    TEXT    NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS observed_packages (
+                    package_name          TEXT NOT NULL,
+                    ecosystem             TEXT NOT NULL,
+                    project_id            TEXT,
+                    first_seen_at         TEXT NOT NULL,
+                    resolved_technology   TEXT,
+                    resolved_at           TEXT,
+                    resolve_attempted_at  TEXT,
+                    PRIMARY KEY (package_name, ecosystem)
                 );
                 """
             )
@@ -1619,8 +1637,193 @@ class DocsHubService:
         install_summary["local_ingest_errors"] = local_result["errors"]
         install_summary["fetch_results"] = fetched
         install_summary["fetch_errors"] = fetch_errors
+
+        # Record every raw package name seen so we can later probe for llms.txt
+        # URLs for packages that had no registry entry.
+        from .manifest_parsers import collect_all_packages as _collect_all
+        all_packages = _collect_all(project_root)
+        if all_packages:
+            self.observe_packages(
+                project_id=install_summary.get("project_id"),
+                packages=all_packages,
+            )
+        install_summary["observed_packages"] = len(all_packages)
+
         install_summary["scan_summary"] = self.scan()
         return install_summary
+
+    def observe_packages(
+        self,
+        project_id: str | None,
+        packages: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Persist raw package names into observed_packages for later resolution.
+
+        Uses INSERT OR IGNORE so first_seen_at is never overwritten on subsequent
+        calls with the same package.
+
+        Args:
+            project_id: project that first surfaced these packages (may be None).
+            packages: list of dicts with ``name`` and ``ecosystem`` keys.
+
+        Returns:
+            Dict with ``observed`` count and ``project_id``.
+        """
+        now = utc_now()
+        with self._connect() as conn:
+            for pkg in packages:
+                name = str(pkg.get("name", "")).strip()
+                ecosystem = str(pkg.get("ecosystem", "unknown")).strip()
+                if not name:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO observed_packages
+                        (package_name, ecosystem, project_id, first_seen_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(package_name, ecosystem) DO NOTHING
+                    """,
+                    (name, ecosystem, project_id, now),
+                )
+        return {"observed": len(packages), "project_id": project_id}
+
+    def _probe_llms_txt(self, package_name: str, ecosystem: str) -> str | None:
+        """Probe candidate URLs to find an llms.txt for *package_name*.
+
+        Returns the first URL that returns a 200 with plain-text (non-HTML)
+        content, or None if nothing is found.
+        """
+        if requests is None:
+            return None
+
+        name = package_name.strip().lower()
+        # Normalise for URL use: drop npm scope prefix if present
+        url_name = re.sub(r"^@[^/]+/", "", name)
+        url_name = re.sub(r"[^a-z0-9\-.]", "-", url_name).strip("-")
+
+        candidates: list[str] = [
+            f"https://{url_name}.dev/llms-full.txt",
+            f"https://{url_name}.io/llms-full.txt",
+            f"https://{url_name}.dev/llms.txt",
+            f"https://{url_name}.io/llms.txt",
+            f"https://docs.{url_name}.dev/llms-full.txt",
+            f"https://docs.{url_name}.io/llms-full.txt",
+            f"https://www.{url_name}.dev/llms-full.txt",
+        ]
+        if ecosystem == "pypi":
+            candidates += [
+                f"https://www.python-{url_name}.org/llms-full.txt",
+                f"https://{url_name}.readthedocs.io/llms-full.txt",
+            ]
+        if ecosystem == "npm":
+            candidates.append(f"https://{url_name}.js.org/llms-full.txt")
+
+        for url in candidates:
+            try:
+                resp = requests.get(url, timeout=5, allow_redirects=True)
+            except Exception:
+                continue
+            if resp.status_code != 200:
+                continue
+            text = resp.text or ""
+            # Reject HTML responses
+            stripped = text[:2000].lstrip()
+            if stripped.lower().startswith(("<!doctype", "<html")):
+                continue
+            # Require at least some meaningful content
+            if len(text.strip()) < 20:
+                continue
+            return url
+        return None
+
+    def resolve_observed_packages(self, limit: int = 50) -> dict[str, Any]:
+        """Probe unresolved observed packages for llms.txt and fetch their docs.
+
+        Skips packages attempted within the last 24 hours to avoid hammering
+        external domains.  Writes discovered docs directly into
+        docs_center/technologies/<technology_id>/ and re-scans.
+
+        Returns:
+            Dict with ``resolved`` list, ``failed`` list, and ``skipped`` count.
+        """
+        now = utc_now()
+        with self._connect() as conn:
+            candidates = conn.execute(
+                """
+                SELECT package_name, ecosystem, project_id
+                FROM observed_packages
+                WHERE resolved_technology IS NULL
+                  AND (
+                    resolve_attempted_at IS NULL
+                    OR resolve_attempted_at < datetime('now', '-24 hours')
+                  )
+                ORDER BY first_seen_at ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+        resolved: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+
+        for row in candidates:
+            pkg_name: str = row["package_name"]
+            ecosystem: str = row["ecosystem"]
+
+            # Always mark attempted_at first so a crash doesn't cause a retry loop
+            with self._connect() as conn:
+                conn.execute(
+                    "UPDATE observed_packages SET resolve_attempted_at = ? "
+                    "WHERE package_name = ? AND ecosystem = ?",
+                    (now, pkg_name, ecosystem),
+                )
+
+            url = self._probe_llms_txt(pkg_name, ecosystem)
+            if url is None:
+                failed.append({"package_name": pkg_name, "ecosystem": ecosystem})
+                continue
+
+            # Derive a technology ID from the package name
+            tech_id = re.sub(r"^@[^/]+/", "", pkg_name.lower())
+            tech_id = re.sub(r"[^a-z0-9\-]", "-", tech_id).strip("-") or "unknown"
+
+            # Download and write the content
+            try:
+                if requests is None:
+                    raise RuntimeError("requests not available")
+                resp = requests.get(url, timeout=30, allow_redirects=True)
+                resp.raise_for_status()
+                content = resp.text
+                tech_dir = self.technologies_root / tech_id
+                tech_dir.mkdir(parents=True, exist_ok=True)
+                filename = "llms-full.txt" if url.endswith("llms-full.txt") else "llms.txt"
+                (tech_dir / filename).write_text(content, encoding="utf-8")
+                # Index the new technology
+                self.scan_technology(tech_id)
+            except Exception as exc:
+                failed.append({"package_name": pkg_name, "ecosystem": ecosystem, "error": str(exc)})
+                continue
+
+            # Mark resolved
+            with self._connect() as conn:
+                conn.execute(
+                    "UPDATE observed_packages SET resolved_technology = ?, resolved_at = ? "
+                    "WHERE package_name = ? AND ecosystem = ?",
+                    (tech_id, now, pkg_name, ecosystem),
+                )
+            resolved.append({"package_name": pkg_name, "ecosystem": ecosystem, "technology": tech_id, "url": url})
+
+        # Count packages that were skipped (already attempted recently)
+        with self._connect() as conn:
+            skipped = conn.execute(
+                """
+                SELECT COUNT(*) FROM observed_packages
+                WHERE resolved_technology IS NULL
+                  AND resolve_attempted_at >= datetime('now', '-24 hours')
+                """
+            ).fetchone()[0]
+
+        return {"resolved": resolved, "failed": failed, "skipped": skipped}
 
     def fetch_docs(
         self,

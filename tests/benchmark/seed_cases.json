@@ -1,6 +1,6 @@
 [
   {
-    "query": "react hooks",
+    "query": "react hooks useState",
     "expected_uri": "doc://react/docs/hooks.md",
     "ranked_uris": [
       "doc://react/docs/hooks.md",
@@ -9,8 +9,62 @@
     ]
   },
   {
-    "query": "python pathlib",
+    "query": "react useEffect cleanup",
+    "expected_uri": "doc://react/docs/effects.md",
+    "ranked_uris": [
+      "doc://react/docs/effects.md",
+      "doc://react/docs/hooks.md",
+      "doc://react/docs/context.md"
+    ]
+  },
+  {
+    "query": "react context API provider",
+    "expected_uri": "doc://react/docs/context.md",
+    "ranked_uris": [
+      "doc://react/docs/context.md",
+      "doc://react/docs/hooks.md",
+      "doc://react/docs/components.md"
+    ]
+  },
+  {
+    "query": "react component lifecycle",
+    "expected_uri": "doc://react/docs/components.md",
+    "ranked_uris": [
+      "doc://react/docs/components.md",
+      "doc://react/docs/effects.md",
+      "doc://react/docs/hooks.md"
+    ]
+  },
+  {
+    "query": "react render props pattern",
+    "expected_uri": "doc://react/docs/render-props.md",
+    "ranked_uris": [
+      "doc://react/docs/render-props.md",
+      "doc://react/docs/components.md",
+      "doc://react/docs/hooks.md"
+    ]
+  },
+  {
+    "query": "react memo performance optimization",
+    "expected_uri": "doc://react/docs/performance.md",
+    "ranked_uris": [
+      "doc://react/docs/performance.md",
+      "doc://react/docs/hooks.md",
+      "doc://react/docs/components.md"
+    ]
+  },
+  {
+    "query": "python pathlib read file",
     "expected_uri": "doc://python/docs/pathlib.md",
+    "ranked_uris": [
+      "doc://python/docs/pathlib.md",
+      "doc://python/docs/os.md",
+      "doc://python/docs/tempfile.md"
+    ]
+  },
+  {
+    "query": "python os path join exists",
+    "expected_uri": "doc://python/docs/os.md",
     "ranked_uris": [
       "doc://python/docs/os.md",
       "doc://python/docs/pathlib.md",
@@ -18,11 +72,390 @@
     ]
   },
   {
-    "query": "nextjs routing",
+    "query": "python tempfile mkdtemp context manager",
+    "expected_uri": "doc://python/docs/tempfile.md",
+    "ranked_uris": [
+      "doc://python/docs/tempfile.md",
+      "doc://python/docs/os.md",
+      "doc://python/docs/pathlib.md"
+    ]
+  },
+  {
+    "query": "python asyncio event loop coroutine",
+    "expected_uri": "doc://python/docs/asyncio.md",
+    "ranked_uris": [
+      "doc://python/docs/asyncio.md",
+      "doc://python/docs/threading.md",
+      "doc://python/docs/concurrent-futures.md"
+    ]
+  },
+  {
+    "query": "python dataclass field default factory",
+    "expected_uri": "doc://python/docs/dataclasses.md",
+    "ranked_uris": [
+      "doc://python/docs/dataclasses.md",
+      "doc://python/docs/typing.md",
+      "doc://python/docs/collections.md"
+    ]
+  },
+  {
+    "query": "python typing Optional Union generic",
+    "expected_uri": "doc://python/docs/typing.md",
+    "ranked_uris": [
+      "doc://python/docs/typing.md",
+      "doc://python/docs/dataclasses.md",
+      "doc://python/docs/abc.md"
+    ]
+  },
+  {
+    "query": "python sqlite3 connection cursor execute",
+    "expected_uri": "doc://python/docs/sqlite3.md",
+    "ranked_uris": [
+      "doc://python/docs/sqlite3.md",
+      "doc://python/docs/contextlib.md",
+      "doc://python/docs/os.md"
+    ]
+  },
+  {
+    "query": "python contextlib suppress enter exit",
+    "expected_uri": "doc://python/docs/contextlib.md",
+    "ranked_uris": [
+      "doc://python/docs/contextlib.md",
+      "doc://python/docs/asyncio.md",
+      "doc://python/docs/tempfile.md"
+    ]
+  },
+  {
+    "query": "nextjs app router pages",
     "expected_uri": "doc://nextjs/docs/app/routing.md",
     "ranked_uris": [
       "doc://nextjs/docs/app/routing.md",
-      "doc://nextjs/docs/pages/router.md"
+      "doc://nextjs/docs/pages/router.md",
+      "doc://nextjs/docs/app/layouts.md"
+    ]
+  },
+  {
+    "query": "nextjs server components data fetching",
+    "expected_uri": "doc://nextjs/docs/app/server-components.md",
+    "ranked_uris": [
+      "doc://nextjs/docs/app/server-components.md",
+      "doc://nextjs/docs/app/routing.md",
+      "doc://nextjs/docs/app/layouts.md"
+    ]
+  },
+  {
+    "query": "nextjs layout root template",
+    "expected_uri": "doc://nextjs/docs/app/layouts.md",
+    "ranked_uris": [
+      "doc://nextjs/docs/app/layouts.md",
+      "doc://nextjs/docs/app/routing.md",
+      "doc://nextjs/docs/app/server-components.md"
+    ]
+  },
+  {
+    "query": "nextjs API route handler",
+    "expected_uri": "doc://nextjs/docs/app/api-routes.md",
+    "ranked_uris": [
+      "doc://nextjs/docs/app/api-routes.md",
+      "doc://nextjs/docs/app/server-components.md",
+      "doc://nextjs/docs/app/routing.md"
+    ]
+  },
+  {
+    "query": "nextjs image optimization next/image",
+    "expected_uri": "doc://nextjs/docs/app/image.md",
+    "ranked_uris": [
+      "doc://nextjs/docs/app/image.md",
+      "doc://nextjs/docs/app/routing.md",
+      "doc://nextjs/docs/app/layouts.md"
+    ]
+  },
+  {
+    "query": "nextjs metadata SEO head title",
+    "expected_uri": "doc://nextjs/docs/app/metadata.md",
+    "ranked_uris": [
+      "doc://nextjs/docs/app/metadata.md",
+      "doc://nextjs/docs/app/layouts.md",
+      "doc://nextjs/docs/app/routing.md"
+    ]
+  },
+  {
+    "query": "fastapi dependency injection",
+    "expected_uri": "doc://fastapi/docs/dependencies.md",
+    "ranked_uris": [
+      "doc://fastapi/docs/dependencies.md",
+      "doc://fastapi/docs/routing.md",
+      "doc://fastapi/docs/security.md"
+    ]
+  },
+  {
+    "query": "fastapi path parameters query params",
+    "expected_uri": "doc://fastapi/docs/routing.md",
+    "ranked_uris": [
+      "doc://fastapi/docs/routing.md",
+      "doc://fastapi/docs/dependencies.md",
+      "doc://fastapi/docs/request-body.md"
+    ]
+  },
+  {
+    "query": "fastapi pydantic model request body",
+    "expected_uri": "doc://fastapi/docs/request-body.md",
+    "ranked_uris": [
+      "doc://fastapi/docs/request-body.md",
+      "doc://fastapi/docs/routing.md",
+      "doc://fastapi/docs/dependencies.md"
+    ]
+  },
+  {
+    "query": "fastapi OAuth2 bearer token security",
+    "expected_uri": "doc://fastapi/docs/security.md",
+    "ranked_uris": [
+      "doc://fastapi/docs/security.md",
+      "doc://fastapi/docs/dependencies.md",
+      "doc://fastapi/docs/routing.md"
+    ]
+  },
+  {
+    "query": "fastapi background tasks async",
+    "expected_uri": "doc://fastapi/docs/background-tasks.md",
+    "ranked_uris": [
+      "doc://fastapi/docs/background-tasks.md",
+      "doc://fastapi/docs/routing.md",
+      "doc://fastapi/docs/dependencies.md"
+    ]
+  },
+  {
+    "query": "fastapi WebSocket connection",
+    "expected_uri": "doc://fastapi/docs/websockets.md",
+    "ranked_uris": [
+      "doc://fastapi/docs/websockets.md",
+      "doc://fastapi/docs/routing.md",
+      "doc://fastapi/docs/background-tasks.md"
+    ]
+  },
+  {
+    "query": "fastapi middleware CORS headers",
+    "expected_uri": "doc://fastapi/docs/middleware.md",
+    "ranked_uris": [
+      "doc://fastapi/docs/middleware.md",
+      "doc://fastapi/docs/routing.md",
+      "doc://fastapi/docs/security.md"
+    ]
+  },
+  {
+    "query": "typescript generic type parameter constraint",
+    "expected_uri": "doc://typescript/docs/generics.md",
+    "ranked_uris": [
+      "doc://typescript/docs/generics.md",
+      "doc://typescript/docs/utility-types.md",
+      "doc://typescript/docs/interfaces.md"
+    ]
+  },
+  {
+    "query": "typescript interface vs type alias",
+    "expected_uri": "doc://typescript/docs/interfaces.md",
+    "ranked_uris": [
+      "doc://typescript/docs/interfaces.md",
+      "doc://typescript/docs/generics.md",
+      "doc://typescript/docs/union-intersection.md"
+    ]
+  },
+  {
+    "query": "typescript union intersection type",
+    "expected_uri": "doc://typescript/docs/union-intersection.md",
+    "ranked_uris": [
+      "doc://typescript/docs/union-intersection.md",
+      "doc://typescript/docs/interfaces.md",
+      "doc://typescript/docs/generics.md"
+    ]
+  },
+  {
+    "query": "typescript utility types Partial Pick Omit",
+    "expected_uri": "doc://typescript/docs/utility-types.md",
+    "ranked_uris": [
+      "doc://typescript/docs/utility-types.md",
+      "doc://typescript/docs/generics.md",
+      "doc://typescript/docs/interfaces.md"
+    ]
+  },
+  {
+    "query": "typescript decorators class method",
+    "expected_uri": "doc://typescript/docs/decorators.md",
+    "ranked_uris": [
+      "doc://typescript/docs/decorators.md",
+      "doc://typescript/docs/interfaces.md",
+      "doc://typescript/docs/generics.md"
+    ]
+  },
+  {
+    "query": "typescript enum const assertion",
+    "expected_uri": "doc://typescript/docs/enums.md",
+    "ranked_uris": [
+      "doc://typescript/docs/enums.md",
+      "doc://typescript/docs/union-intersection.md",
+      "doc://typescript/docs/utility-types.md"
+    ]
+  },
+  {
+    "query": "tailwind flex grid layout responsive",
+    "expected_uri": "doc://tailwind/docs/layout.md",
+    "ranked_uris": [
+      "doc://tailwind/docs/layout.md",
+      "doc://tailwind/docs/spacing.md",
+      "doc://tailwind/docs/responsive.md"
+    ]
+  },
+  {
+    "query": "tailwind responsive breakpoint sm md lg",
+    "expected_uri": "doc://tailwind/docs/responsive.md",
+    "ranked_uris": [
+      "doc://tailwind/docs/responsive.md",
+      "doc://tailwind/docs/layout.md",
+      "doc://tailwind/docs/spacing.md"
+    ]
+  },
+  {
+    "query": "tailwind dark mode class variant",
+    "expected_uri": "doc://tailwind/docs/dark-mode.md",
+    "ranked_uris": [
+      "doc://tailwind/docs/dark-mode.md",
+      "doc://tailwind/docs/responsive.md",
+      "doc://tailwind/docs/layout.md"
+    ]
+  },
+  {
+    "query": "tailwind custom theme extend colors",
+    "expected_uri": "doc://tailwind/docs/theme.md",
+    "ranked_uris": [
+      "doc://tailwind/docs/theme.md",
+      "doc://tailwind/docs/dark-mode.md",
+      "doc://tailwind/docs/responsive.md"
+    ]
+  },
+  {
+    "query": "tailwind animation transition hover",
+    "expected_uri": "doc://tailwind/docs/transitions.md",
+    "ranked_uris": [
+      "doc://tailwind/docs/transitions.md",
+      "doc://tailwind/docs/layout.md",
+      "doc://tailwind/docs/responsive.md"
+    ]
+  },
+  {
+    "query": "tailwind typography prose plugin",
+    "expected_uri": "doc://tailwind/docs/typography.md",
+    "ranked_uris": [
+      "doc://tailwind/docs/typography.md",
+      "doc://tailwind/docs/theme.md",
+      "doc://tailwind/docs/layout.md"
+    ]
+  },
+  {
+    "query": "react hooks pitfall stale closure",
+    "expected_uri": "doc://react/docs/hooks.md",
+    "ranked_uris": [
+      "doc://react/docs/hooks.md",
+      "doc://react/docs/effects.md",
+      "doc://react/docs/performance.md"
+    ]
+  },
+  {
+    "query": "nextjs static generation getStaticProps",
+    "expected_uri": "doc://nextjs/docs/pages/router.md",
+    "ranked_uris": [
+      "doc://nextjs/docs/pages/router.md",
+      "doc://nextjs/docs/app/server-components.md",
+      "doc://nextjs/docs/app/routing.md"
+    ]
+  },
+  {
+    "query": "python concurrent futures thread pool executor",
+    "expected_uri": "doc://python/docs/concurrent-futures.md",
+    "ranked_uris": [
+      "doc://python/docs/concurrent-futures.md",
+      "doc://python/docs/threading.md",
+      "doc://python/docs/asyncio.md"
+    ]
+  },
+  {
+    "query": "python threading lock synchronization",
+    "expected_uri": "doc://python/docs/threading.md",
+    "ranked_uris": [
+      "doc://python/docs/threading.md",
+      "doc://python/docs/concurrent-futures.md",
+      "doc://python/docs/asyncio.md"
+    ]
+  },
+  {
+    "query": "fastapi exception handler HTTP error",
+    "expected_uri": "doc://fastapi/docs/exceptions.md",
+    "ranked_uris": [
+      "doc://fastapi/docs/exceptions.md",
+      "doc://fastapi/docs/routing.md",
+      "doc://fastapi/docs/middleware.md"
+    ]
+  },
+  {
+    "query": "fastapi testing client pytest",
+    "expected_uri": "doc://fastapi/docs/testing.md",
+    "ranked_uris": [
+      "doc://fastapi/docs/testing.md",
+      "doc://fastapi/docs/dependencies.md",
+      "doc://fastapi/docs/routing.md"
+    ]
+  },
+  {
+    "query": "typescript narrowing type guard",
+    "expected_uri": "doc://typescript/docs/narrowing.md",
+    "ranked_uris": [
+      "doc://typescript/docs/narrowing.md",
+      "doc://typescript/docs/union-intersection.md",
+      "doc://typescript/docs/generics.md"
+    ]
+  },
+  {
+    "query": "typescript mapped conditional infer type",
+    "expected_uri": "doc://typescript/docs/advanced-types.md",
+    "ranked_uris": [
+      "doc://typescript/docs/advanced-types.md",
+      "doc://typescript/docs/generics.md",
+      "doc://typescript/docs/utility-types.md"
+    ]
+  },
+  {
+    "query": "react suspense lazy loading code splitting",
+    "expected_uri": "doc://react/docs/performance.md",
+    "ranked_uris": [
+      "doc://react/docs/performance.md",
+      "doc://react/docs/components.md",
+      "doc://react/docs/hooks.md"
+    ]
+  },
+  {
+    "query": "nextjs caching revalidate ISR",
+    "expected_uri": "doc://nextjs/docs/app/caching.md",
+    "ranked_uris": [
+      "doc://nextjs/docs/app/caching.md",
+      "doc://nextjs/docs/app/server-components.md",
+      "doc://nextjs/docs/app/routing.md"
+    ]
+  },
+  {
+    "query": "python abc abstract base class",
+    "expected_uri": "doc://python/docs/abc.md",
+    "ranked_uris": [
+      "doc://python/docs/abc.md",
+      "doc://python/docs/typing.md",
+      "doc://python/docs/dataclasses.md"
+    ]
+  },
+  {
+    "query": "tailwind spacing padding margin utility",
+    "expected_uri": "doc://tailwind/docs/spacing.md",
+    "ranked_uris": [
+      "doc://tailwind/docs/spacing.md",
+      "doc://tailwind/docs/layout.md",
+      "doc://tailwind/docs/responsive.md"
     ]
   }
 ]

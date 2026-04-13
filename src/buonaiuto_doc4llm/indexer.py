@@ -126,16 +126,28 @@ class DocIndexer:
                 all_points.append(point)
 
         if all_points:
+            use_named = getattr(self.qdrant_client, "named_vectors", False)
             try:
                 from qdrant_client.models import PointStruct
-                qdrant_points = [
-                    PointStruct(
-                        id=p["id"],
-                        vector=p["vector"],
-                        payload=p["payload"],
-                    )
-                    for p in all_points
-                ]
+                if use_named:
+                    # Named-vector collection: wrap dense vector under "dense" key
+                    qdrant_points = [
+                        PointStruct(
+                            id=p["id"],
+                            vector={"dense": p["vector"]},
+                            payload=p["payload"],
+                        )
+                        for p in all_points
+                    ]
+                else:
+                    qdrant_points = [
+                        PointStruct(
+                            id=p["id"],
+                            vector=p["vector"],
+                            payload=p["payload"],
+                        )
+                        for p in all_points
+                    ]
             except ImportError:
                 qdrant_points = all_points
 
@@ -192,6 +204,8 @@ class DocIndexer:
                 "rel_path": rel_path,
                 "title": title,
                 "source_uri": f"doc://{technology}/{rel_path}",
-                "snippet": chunk[:400],
+                # Store the full chunk so the retriever can extract a
+                # query-time best-passage snippet rather than a fixed prefix.
+                "snippet": chunk,
             },
         }

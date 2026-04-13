@@ -189,6 +189,7 @@ This works for internal documentation, private libraries, API specs, architectur
 | `fetch_docs` | Pull the latest docs from the web and re-index |
 | `install_project` | Auto-detect technologies from a project path and bootstrap the local cache |
 | `scan_docs` | Rescan the local mirror and record change events |
+| `resolve_observed_packages` | Probe unresolved packages for llms.txt URLs and auto-fetch their docs |
 | `list_project_updates` | List unread documentation changes for a subscribed project |
 | `ack_project_updates` | Mark updates as read (advance the project cursor) |
 | `diff_since` | Show all changes since a given timestamp, with pagination |
@@ -220,7 +221,7 @@ pip install -e ".[fetch]"
 # With web dashboard
 pip install -e ".[dashboard]"
 
-# With local vector search (sentence-transformers)
+# With local vector search (sentence-transformers + cross-encoder reranker)
 pip install -e ".[embeddings-st,qdrant]"
 
 # Everything
@@ -256,6 +257,13 @@ claude mcp add --scope project buonaiuto-doc4llm \
   -- -m buonaiuto_doc4llm \
      --base-dir /path/to/Buonaiuto-Doc4LLM \
      serve
+
+# With semantic search (sentence-transformers + BM25 hybrid + cross-encoder reranking)
+claude mcp add --scope project buonaiuto-doc4llm \
+  /opt/anaconda3/bin/python \
+  -- -m buonaiuto_doc4llm \
+     --base-dir /path/to/Buonaiuto-Doc4LLM \
+     serve --embeddings
 
 # Global scope (all your projects)
 claude mcp add --scope user buonaiuto-doc4llm \
@@ -505,21 +513,25 @@ PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve --dashboard --dash
 
 ## Auto project setup — zero configuration required
 
-The most powerful feature: point the server at your project and it figures out everything else automatically.
+The most powerful feature: point the server at any project and it figures out everything else automatically.
 
 ### How it works
 
-When you run `install_project` (CLI or MCP tool), or when an MCP client opens a workspace, the server:
+When you run `install_project` (CLI or MCP tool), or when an MCP client opens a workspace, the server runs through six detection layers and then fetches docs:
 
-1. **Detects technologies** — reads `package.json`, `pyproject.toml`, `requirements.txt`, `Pipfile`, `go.mod`, and other manifests. Also scans the entire project tree for `llms.txt` / `llms-full.txt` files. Maps package names to library IDs via the built-in registry (e.g. `"ai"` or `"@ai-sdk/*"` → `vercel-ai-sdk`, `"fastapi"` → `fastapi`).
+1. **Parse all manifests** — reads every dependency file it finds in the project root (see [Supported project types](#supported-project-types) below). Maps package names to library IDs via the built-in registry.
 
-2. **Ingests local docs instantly** — any `llms.txt` or `llms-full.txt` files found in the project tree are copied directly into `docs_center/technologies/<tech>/` with no HTTP requests. These technologies are immediately searchable.
+2. **Scan config file hints** — presence of files like `vite.config.ts`, `tailwind.config.js`, or `supabase/config.toml` implies the matching technology even without a manifest entry.
 
-3. **Fetches remaining docs from the web** — technologies not satisfied by a local file are downloaded from official sources (e.g. `https://react.dev/llms-full.txt`). Uses conditional HTTP (ETag / If-Modified-Since) — unchanged sources are skipped.
+3. **Ingest local llms.txt files** — any `llms.txt` or `llms-full.txt` found anywhere in the project tree is copied directly into `docs_center/technologies/<tech>/` with no HTTP requests.
 
-4. **Indexes everything** — SHA-256 diffs the new files and writes `added` events to SQLite so the AI immediately knows what's new.
+4. **Fetch remaining docs from the web** — technologies not satisfied locally are downloaded from official sources (e.g. `https://react.dev/llms-full.txt`). Uses conditional HTTP (ETag / If-Modified-Since) — unchanged sources are skipped.
 
-5. **Creates the project subscription** — writes `docs_center/projects/<id>.json` with the detected technology list. Future `list_project_updates` calls use this to surface only relevant changes.
+5. **Record every raw package name** — all package names from all manifests are persisted to the `observed_packages` table, including those that had no registry match. This is the input for the auto-discovery step.
+
+6. **Index everything and create the project subscription** — SHA-256 diffs new files, writes change events to SQLite, and writes `docs_center/projects/<id>.json` with the detected technology list.
+
+**File-extension fallback** — if a project has no manifest files at all (e.g. a bare Python or Go project without a lockfile), the server infers the language from the source file extensions present (`.py` → `python`, `.go` → `go`, `.rs` → `rust`, `.ts` → `typescript`, etc.).
 
 ### CLI
 
@@ -539,16 +551,84 @@ If your MCP client sends workspace context in the `initialize` call (Claude Code
 
 ---
 
+## Supported project types
+
+The server reads dependency manifests from all major language ecosystems. The top 90% of real-world projects are covered by the first five.
+
+| Ecosystem | Manifest file(s) | Package registry |
+|---|---|---|
+| **JavaScript / TypeScript** | `package.json` | npm |
+| **Python** | `requirements.txt`, `pyproject.toml`, `setup.py`, `setup.cfg`, `Pipfile` | PyPI |
+| **Go** | `go.mod` | pkg.go.dev |
+| **Rust** | `Cargo.toml` | crates.io |
+| **Java / Kotlin** | `pom.xml` (Maven), `build.gradle` / `build.gradle.kts` (Gradle) | Maven Central |
+| **Ruby** | `Gemfile` | RubyGems |
+| **PHP** | `composer.json` | Packagist |
+| **Dart / Flutter** | `pubspec.yaml` | pub.dev |
+| **C# / .NET** | `*.csproj`, `packages.config` | NuGet |
+
+Projects may use any combination of these — a monorepo with both `package.json` and `pyproject.toml` is handled correctly.
+
+### Projects with no manifest
+
+Some projects have no package manager at all: a bare Python script directory, a Go service without modules, a Rust project mid-init. For these, the server falls back to scanning source file extensions:
+
+| Extension | Inferred technology |
+|---|---|
+| `.py` | `python` |
+| `.go` | `go` |
+| `.rs` | `rust` |
+| `.ts`, `.tsx` | `typescript` |
+| `.java`, `.kt` | `java` |
+| `.rb` | `ruby` |
+| `.php` | `php` |
+| `.cs` | `dotnet` |
+| `.swift` | `swift` |
+| `.dart` | `dart` |
+| `.ex`, `.exs` | `elixir` |
+
+Standard non-source directories (`node_modules`, `.git`, `__pycache__`, `vendor`, `target`, etc.) are skipped during this scan.
+
+---
+
 ## Auto-discovery of unknown libraries
 
-If a project uses a library that is **not in the built-in registry**, the server does not give up. It automatically:
+If a project uses a library that is **not in the built-in registry**, the server does not give up — it remembers it and tries to discover the documentation later.
 
-1. Searches for the library's official documentation site
-2. Probes candidate domains for `llms-full.txt` / `llms.txt` endpoints
-3. If found, **downloads the documentation** and indexes it
-4. **Persists the new entry to `registry.json`** so future fetches work without searching again
+### How it works
 
-This means the server handles any library — not just the 19 built-in ones. Discovery errors are reported in `fetch_errors` in the install result and do not block the rest of the installation.
+Every package name seen during `install_project` — whether matched to a known library or not — is written into the `observed_packages` table in SQLite. The table records the package name, its ecosystem (`npm`, `pypi`, `cargo`, etc.), which project first used it, and when it was first seen.
+
+When `resolve_observed_packages` runs (automatically as a side effect of `scan_docs`, or explicitly via the MCP tool), the server:
+
+1. Queries for unresolved packages not attempted in the last 24 hours
+2. For each, probes a set of candidate `llms.txt` URL patterns — for example for an npm package named `framer-motion`:
+   - `https://framer-motion.dev/llms-full.txt`
+   - `https://framer-motion.io/llms-full.txt`
+   - `https://docs.framer-motion.dev/llms-full.txt`
+   - `https://framer-motion.js.org/llms-full.txt`
+   - … and several more variants
+3. If a URL returns plain-text content (HTML responses are rejected), the docs are downloaded, written to `docs_center/technologies/<id>/`, and indexed immediately
+4. The package is marked `resolved` in the DB with the discovered technology ID and URL
+
+This means the technology list grows automatically from real usage — no manual registry maintenance required. The 24-hour cooldown prevents hammering external domains on every scan.
+
+### Trigger it manually
+
+```json
+{"name": "resolve_observed_packages", "arguments": {"limit": 50}}
+```
+
+Returns:
+```json
+{
+  "resolved": [{"package_name": "framer-motion", "ecosystem": "npm", "technology": "framer-motion", "url": "https://..."}],
+  "failed":   [{"package_name": "some-internal-lib", "ecosystem": "npm"}],
+  "skipped":  3
+}
+```
+
+Discovery errors never block the rest of the installation — `failed` entries are retried automatically on the next scan.
 
 ---
 
@@ -661,7 +741,7 @@ Requires: `pip install -e ".[dashboard]"`
 ## Running the tests
 
 ```bash
-pytest                        # all 274 tests
+pytest                        # all 352 tests
 pytest tests/test_service.py  # single file
 pytest -k test_search         # filter by name
 pytest --tb=short -q          # compact output
@@ -676,10 +756,18 @@ No database mocking — tests use real SQLite instances via `tmp_path`.
 | Current | Planned |
 |---|---|
 | SQLite | PostgreSQL / Supabase |
-| Lexical BM25 search | Hybrid BM25 + dense Qdrant retrieval + cross-encoder reranking |
+| Qdrant dense-only search | Qdrant dense + BM25 sparse RRF hybrid + cross-encoder reranking ✓ |
 | stdio MCP | Streamable HTTP MCP transport |
 | Local fetch schedule | Ingestion worker with source trust scoring |
 | Project JSON files | Workspace subscriptions with API key auth |
 | Python CLI | Full SaaS control plane |
+
+**Retrieval quality implemented:**
+- H1 + H2/H3 boundary chunking (finer-grained topic chunks)
+- Query-time best-passage snippet extraction (not fixed 400-char prefix)
+- Cross-encoder reranking (`cross-encoder/ms-marco-MiniLM-L-6-v2`) when sentence-transformers is installed
+- BM25 sparse vectors + dense RRF hybrid search when qdrant-client ≥ 1.7
+- `--embeddings` CLI flag for `serve` and `fetch` to activate semantic search
+- 50+ benchmark cases across 6 libraries; eval harness with MRR@10 gate
 
 **Phase 1 target:** MRR@10 ≥ 0.70 on the seed library benchmark set.

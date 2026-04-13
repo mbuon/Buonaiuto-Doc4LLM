@@ -485,11 +485,37 @@ class MCPServer:
                     },
                 },
             },
+        ]  + [
+            {
+                "name": "resolve_observed_packages",
+                "description": (
+                    "Attempt to discover llms.txt documentation sources for packages that were "
+                    "seen during project install but had no known documentation. "
+                    "Probes candidate URLs and, if found, fetches and indexes docs automatically. "
+                    "Safe to call repeatedly — packages attempted within the last 24 hours are skipped. "
+                    "Returns {resolved: [...], failed: [...], skipped: int}."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of unresolved packages to probe in this call (default 50).",
+                            "default": 50,
+                        },
+                    },
+                },
+            },
         ]
 
     def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if name == "scan_docs":
             payload = self.service.scan()
+            # Side-effect: probe unresolved packages non-blocking
+            try:
+                self.service.resolve_observed_packages(limit=10)
+            except Exception:
+                pass
         elif name == "list_project_updates":
             payload = self.service.list_project_updates(
                 project_id=arguments["project_id"],
@@ -590,6 +616,10 @@ class MCPServer:
                 technology=arguments.get("technology"),
                 since=arguments.get("since"),
                 until=arguments.get("until"),
+            )
+        elif name == "resolve_observed_packages":
+            payload = self.service.resolve_observed_packages(
+                limit=int(arguments.get("limit", 50)),
             )
         else:
             raise ValueError(f"Unknown tool: {name}")

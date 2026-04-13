@@ -23,6 +23,89 @@ except ImportError:  # pragma: no cover
     load_registry = None  # type: ignore[assignment]
 
 
+def _build_service(base_dir: str, embeddings: bool = False) -> DocsHubService:
+    """Construct a DocsHubService, optionally wiring semantic search.
+
+    When *embeddings* is True **and** sentence-transformers is installed,
+    builds an in-memory Qdrant collection backed by all-MiniLM-L6-v2 and
+    injects a DocIndexer + HybridRetriever into the service.
+
+    This activates fully offline semantic (dense) + BM25 (sparse) hybrid
+    search with no additional configuration.
+    """
+    if not embeddings:
+        return DocsHubService(base_dir)
+
+    try:
+        import importlib.util
+        if importlib.util.find_spec("sentence_transformers") is None:
+            import sys
+            print(
+                "Warning: sentence-transformers not installed — semantic search disabled.\n"
+                "Install it with: pip install 'buonaiuto-doc4llm[embeddings-st]'",
+                file=sys.stderr,
+            )
+            return DocsHubService(base_dir)
+
+        from qdrant_client import QdrantClient  # type: ignore[import-untyped]
+        from retrieval.model_provider import ModelProviderRouter
+        from retrieval.qdrant_client import QdrantHybridClient
+        from retrieval.retriever import HybridRetriever
+        from retrieval.sentence_transformers_provider import SentenceTransformersEmbeddingProvider
+        from buonaiuto_doc4llm.indexer import DocIndexer
+
+        st_provider = SentenceTransformersEmbeddingProvider(name="sentence-transformers")
+        router = ModelProviderRouter(providers=[st_provider])
+
+        qdrant_raw = QdrantClient(":memory:")
+        collection_name = "doc4llm_local"
+
+        # Create the collection with both dense and sparse vectors when the
+        # client version supports named vector configs; otherwise create a
+        # legacy dense-only collection.
+        named_collection = False
+        try:
+            from qdrant_client.models import (  # type: ignore[import-untyped]
+                VectorParams, Distance, SparseVectorParams, SparseIndexParams,
+            )
+            qdrant_raw.create_collection(
+                collection_name=collection_name,
+                vectors_config={"dense": VectorParams(size=384, distance=Distance.COSINE)},
+                sparse_vectors_config={
+                    "sparse": SparseVectorParams(index=SparseIndexParams(on_disk=False)),
+                },
+            )
+            named_collection = True
+        except Exception:
+            # Older qdrant-client — fall back to legacy dense-only config
+            from qdrant_client.models import VectorParams, Distance  # type: ignore[import-untyped]
+            qdrant_raw.create_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+            )
+
+        qdrant_client = QdrantHybridClient(
+            client=qdrant_raw,
+            collection_name=collection_name,
+            embedder=router,
+            named_vectors=named_collection,
+        )
+        retriever = HybridRetriever(qdrant_client=qdrant_client)
+        indexer = DocIndexer(
+            technologies_root=str(Path(base_dir) / "docs_center" / "technologies"),
+            qdrant_client=qdrant_client,
+            embedder=router,
+        )
+
+        service = DocsHubService(base_dir, retriever=retriever, indexer=indexer)
+        return service
+
+    except Exception as exc:
+        import sys
+        print(f"Warning: could not activate semantic search: {exc}", file=sys.stderr)
+        return DocsHubService(base_dir)
+
+
 def print_json(payload: object) -> None:
     print(json.dumps(payload, indent=2))
 
@@ -86,6 +169,11 @@ def build_parser() -> argparse.ArgumentParser:
     fetch = subparsers.add_parser("fetch", help="Fetch documentation from the web and re-scan")
     fetch.add_argument("--technology", help="Fetch only this technology (e.g. react, nextjs)")
     fetch.add_argument(
+        "--embeddings",
+        action="store_true",
+        help="Enable offline semantic search after fetching",
+    )
+    fetch.add_argument(
         "--interval",
         type=int,
         default=None,
@@ -106,6 +194,14 @@ def build_parser() -> argparse.ArgumentParser:
     serve = subparsers.add_parser("serve")
     serve.add_argument("--project-path")
     serve.add_argument("--project-id")
+    serve.add_argument(
+        "--embeddings",
+        action="store_true",
+        help=(
+            "Enable offline semantic search (sentence-transformers + in-memory Qdrant). "
+            "Requires: pip install 'buonaiuto-doc4llm[embeddings-st]'"
+        ),
+    )
     serve.add_argument(
         "--dashboard",
         action="store_true",
@@ -151,7 +247,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    service = DocsHubService(args.base_dir)
+    embeddings = getattr(args, "embeddings", False)
+    service = _build_service(args.base_dir, embeddings=embeddings)
 
     if args.command == "scan":
         print_json(service.scan())

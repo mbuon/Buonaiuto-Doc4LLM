@@ -7,6 +7,26 @@ from typing import Any, Sequence
 
 from retrieval.qdrant_client import QdrantQuery
 
+# ---------------------------------------------------------------------------
+# Optional cross-encoder reranker (sentence-transformers)
+# ---------------------------------------------------------------------------
+
+_CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+_cross_encoder_cache: Any = None
+
+
+def _get_cross_encoder() -> Any:
+    """Return a cached CrossEncoder instance, or None if unavailable."""
+    global _cross_encoder_cache
+    if _cross_encoder_cache is not None:
+        return _cross_encoder_cache
+    try:
+        from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
+        _cross_encoder_cache = CrossEncoder(_CROSS_ENCODER_MODEL)
+    except Exception:
+        _cross_encoder_cache = False  # Mark unavailable, avoid repeated attempts
+    return _cross_encoder_cache if _cross_encoder_cache else None
+
 
 @dataclass(frozen=True)
 class RetrievalDocument:
@@ -249,6 +269,10 @@ class HybridRetriever:
             logging.getLogger(__name__).warning("Hybrid search failed: %s", exc)
             return []
 
+        terms = [t for t in query.text.strip().lower().split() if t not in self._STOP_WORDS and len(t) > 1]
+        if not terms:
+            terms = query.text.strip().lower().split()
+
         matches: list[RetrievalMatch] = []
         for row in rows:
             rel_path = row.get("rel_path")
@@ -262,6 +286,13 @@ class HybridRetriever:
                 continue
             if query.version is not None and row.get("version") != query.version:
                 continue
+            # Apply query-time best-passage extraction when chunk text is stored
+            raw_snippet = row.get("snippet", "")
+            snippet = (
+                self._build_snippet(raw_snippet, terms, query.text)
+                if raw_snippet and terms
+                else raw_snippet
+            )
             matches.append(
                 RetrievalMatch(
                     workspace_id=row.get("workspace_id"),
@@ -271,7 +302,7 @@ class HybridRetriever:
                     title=title,
                     source_uri=source_uri,
                     score=round(float(row.get("score", 0.0)), 3),
-                    snippet=row.get("snippet", ""),
+                    snippet=snippet,
                 )
             )
         matches.sort(key=lambda match: match.score, reverse=True)
@@ -283,54 +314,90 @@ class HybridRetriever:
         terms: list[str],
         query_text: str,
     ) -> list[RetrievalMatch]:
-        """Re-rank hybrid (vector) results using lexical signals.
+        """Re-rank hybrid (vector) results.
 
-        Boosts results where query terms appear in the title or path,
-        and where adjacent term pairs appear in the snippet.
+        When sentence-transformers is installed the cross-encoder
+        ``cross-encoder/ms-marco-MiniLM-L-6-v2`` is used for neural
+        reranking.  Otherwise falls back to lexical signal boosts.
         """
-        reranked: list[tuple[float, RetrievalMatch]] = []
+        cross_encoder = _get_cross_encoder()
+        if cross_encoder is not None:
+            return _rerank_with_cross_encoder(matches, query_text, cross_encoder)
+        return _rerank_lexical(matches, terms, query_text)
 
-        for m in matches:
-            score = m.score  # cosine similarity [0, 1]
-            title_lc = m.title.lower()
-            path_lc = m.rel_path.lower()
-            snippet_lc = m.snippet.lower()
 
-            # Term coverage in title
-            title_term_hits = sum(1 for t in terms if t in title_lc)
-            title_coverage = title_term_hits / len(terms) if terms else 0
+def _rerank_with_cross_encoder(
+    matches: list[RetrievalMatch],
+    query_text: str,
+    cross_encoder: Any,
+) -> list[RetrievalMatch]:
+    """Re-rank using a neural cross-encoder (sentence-transformers)."""
+    if not matches:
+        return matches
+    pairs = [(query_text, m.snippet or m.title) for m in matches]
+    try:
+        scores: list[float] = cross_encoder.predict(pairs).tolist()
+    except Exception:
+        return matches  # Neural rerank failed — return in original order
 
-            # Term coverage in path
-            path_term_hits = sum(1 for t in terms if t in path_lc)
-            path_coverage = path_term_hits / len(terms) if terms else 0
+    reranked = sorted(zip(scores, matches), key=lambda x: x[0], reverse=True)
+    return [
+        RetrievalMatch(
+            workspace_id=m.workspace_id,
+            library_id=m.library_id,
+            version=m.version,
+            rel_path=m.rel_path,
+            title=m.title,
+            source_uri=m.source_uri,
+            score=round(float(s), 3),
+            snippet=m.snippet,
+        )
+        for s, m in reranked
+    ]
 
-            # Adjacent pair bonus in snippet
-            pair_bonus = 0
-            for i in range(len(terms) - 1):
-                pair = terms[i] + " " + terms[i + 1]
-                if pair in snippet_lc:
-                    pair_bonus += 0.1
 
-            # Combine: vector score + lexical boosts
-            boost = (title_coverage * 0.3) + (path_coverage * 0.15) + pair_bonus
-            final_score = score + boost
+def _rerank_lexical(
+    matches: list[RetrievalMatch],
+    terms: list[str],
+    query_text: str,
+) -> list[RetrievalMatch]:
+    """Re-rank hybrid results using lexical signals when cross-encoder is unavailable."""
+    reranked: list[tuple[float, RetrievalMatch]] = []
 
-            reranked.append((
-                final_score,
-                RetrievalMatch(
-                    workspace_id=m.workspace_id,
-                    library_id=m.library_id,
-                    version=m.version,
-                    rel_path=m.rel_path,
-                    title=m.title,
-                    source_uri=m.source_uri,
-                    score=round(final_score, 3),
-                    snippet=m.snippet,
-                ),
-            ))
+    for m in matches:
+        score = m.score
+        title_lc = m.title.lower()
+        path_lc = m.rel_path.lower()
+        snippet_lc = m.snippet.lower()
 
-        reranked.sort(key=lambda x: x[0], reverse=True)
-        return [m for _, m in reranked]
+        title_coverage = sum(1 for t in terms if t in title_lc) / len(terms) if terms else 0
+        path_coverage = sum(1 for t in terms if t in path_lc) / len(terms) if terms else 0
+
+        pair_bonus = 0.0
+        for i in range(len(terms) - 1):
+            pair = terms[i] + " " + terms[i + 1]
+            if pair in snippet_lc:
+                pair_bonus += 0.1
+
+        boost = (title_coverage * 0.3) + (path_coverage * 0.15) + pair_bonus
+        final_score = score + boost
+
+        reranked.append((
+            final_score,
+            RetrievalMatch(
+                workspace_id=m.workspace_id,
+                library_id=m.library_id,
+                version=m.version,
+                rel_path=m.rel_path,
+                title=m.title,
+                source_uri=m.source_uri,
+                score=round(final_score, 3),
+                snippet=m.snippet,
+            ),
+        ))
+
+    reranked.sort(key=lambda x: x[0], reverse=True)
+    return [m for _, m in reranked]
 
 
 def _extract_around(content: str, idx: int, match_len: int, radius: int) -> str:

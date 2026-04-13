@@ -11,48 +11,26 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
 
-
-PACKAGE_TO_TECHNOLOGY: dict[str, str] = {
-    "react": "react",
-    "react-dom": "react",
-    "next": "nextjs",
-    "nextjs": "nextjs",
-    "svelte": "svelte",
-    "vue": "vue",
-    "angular": "angular",
-    "@supabase/supabase-js": "supabase",
-    "supabase": "supabase",
-    "supabase-py": "supabase",
-    "fastapi": "fastapi",
-    "pydantic": "pydantic",
-    "sqlalchemy": "sqlalchemy",
-    "pytest": "pytest",
-    "langchain": "langchain",
-    "llamaindex": "llamaindex",
-    "openai": "openai",
-    "anthropic": "anthropic",
-    "transformers": "huggingface-transformers",
-    "docker": "docker",
-    "kubernetes": "kubernetes",
-    "terraform": "terraform",
-    "tailwindcss": "tailwindcss",
-    "vite": "vite",
-    "typescript": "typescript",
-    "stripe": "stripe",
-}
-
-FILE_HINTS: dict[str, str] = {
-    "next.config.js": "nextjs",
-    "next.config.mjs": "nextjs",
-    "tailwind.config.js": "tailwindcss",
-    "tailwind.config.ts": "tailwindcss",
-    "vite.config.ts": "vite",
-    "vite.config.js": "vite",
-    "supabase/config.toml": "supabase",
-    "docker-compose.yml": "docker",
-    "docker-compose.yaml": "docker",
-    "terraform.tf": "terraform",
-}
+from buonaiuto_doc4llm._package_map import (
+    FILE_HINTS,
+    PACKAGE_TO_TECHNOLOGY,
+    map_package_to_technology,
+)
+from buonaiuto_doc4llm.manifest_parsers import (
+    _detect_from_build_gradle,
+    _detect_from_cargo_toml,
+    _detect_from_composer_json,
+    _detect_from_csproj,
+    _detect_from_file_extensions,
+    _detect_from_gemfile,
+    _detect_from_go_mod,
+    _detect_from_pipfile,
+    _detect_from_pom_xml,
+    _detect_from_pubspec_yaml,
+    _detect_from_setup_cfg,
+    _detect_from_setup_py,
+    collect_all_packages,
+)
 
 
 def detect_project_technologies(project_root: Path | str) -> list[str]:
@@ -61,12 +39,30 @@ def detect_project_technologies(project_root: Path | str) -> list[str]:
         raise ValueError(f"project_root does not exist: {root}")
 
     technologies: set[str] = set()
+    # Layer 1: standard manifest parsers (original three)
     technologies.update(_detect_from_package_json(root))
     technologies.update(_detect_from_requirements(root))
     technologies.update(_detect_from_pyproject(root))
+    # Layer 2: additional manifest parsers
+    technologies.update(_detect_from_setup_py(root))
+    technologies.update(_detect_from_setup_cfg(root))
+    technologies.update(_detect_from_pipfile(root))
+    technologies.update(_detect_from_cargo_toml(root))
+    technologies.update(_detect_from_go_mod(root))
+    technologies.update(_detect_from_pom_xml(root))
+    technologies.update(_detect_from_build_gradle(root))
+    technologies.update(_detect_from_gemfile(root))
+    technologies.update(_detect_from_composer_json(root))
+    technologies.update(_detect_from_pubspec_yaml(root))
+    technologies.update(_detect_from_csproj(root))
+    # Layer 3: config file hints
     technologies.update(_detect_from_file_hints(root))
-    technologies.update(_detect_from_docs_center(root))
+    # Layer 4: self-describing llms.txt files
     technologies.update(_detect_from_local_llms_txt(root))
+    # Layer 5: already-indexed technologies
+    technologies.update(_detect_from_docs_center(root))
+    # Layer 6: file-extension fallback (no manifest present)
+    technologies.update(_detect_from_file_extensions(root))
     return sorted(technologies)
 
 
@@ -224,7 +220,7 @@ def _detect_from_package_json(root: Path) -> set[str]:
         if not isinstance(values, dict):
             continue
         for package_name in values.keys():
-            mapped = _map_package_to_technology(str(package_name))
+            mapped = map_package_to_technology(str(package_name))
             if mapped:
                 technologies.add(mapped)
     return technologies
@@ -240,7 +236,7 @@ def _detect_from_requirements(root: Path) -> set[str]:
         if not line or line.startswith("#"):
             continue
         normalized = re.split(r"[<>=!~\[]", line, maxsplit=1)[0].strip()
-        mapped = _map_package_to_technology(normalized)
+        mapped = map_package_to_technology(normalized)
         if mapped:
             technologies.add(mapped)
     return technologies
@@ -260,7 +256,7 @@ def _detect_from_pyproject(root: Path) -> set[str]:
     dependencies = project.get("dependencies", []) if isinstance(project, dict) else []
     if isinstance(dependencies, list):
         for dep in dependencies:
-            mapped = _map_package_to_technology(str(dep))
+            mapped = map_package_to_technology(str(dep))
             if mapped:
                 technologies.add(mapped)
 
@@ -270,7 +266,7 @@ def _detect_from_pyproject(root: Path) -> set[str]:
             if not isinstance(values, list):
                 continue
             for dep in values:
-                mapped = _map_package_to_technology(str(dep))
+                mapped = map_package_to_technology(str(dep))
                 if mapped:
                     technologies.add(mapped)
     return technologies
@@ -282,54 +278,6 @@ def _detect_from_file_hints(root: Path) -> set[str]:
         if (root / relative).exists():
             technologies.add(technology)
     return technologies
-
-
-def _map_package_to_technology(package_name: str) -> str | None:
-    normalized = package_name.strip().lower()
-    if not normalized:
-        return None
-    normalized = re.split(r"[<>=!~\[]", normalized, maxsplit=1)[0].strip()
-    mapped = PACKAGE_TO_TECHNOLOGY.get(normalized)
-    if mapped is not None:
-        return mapped
-    return _registry_package_to_technology_map().get(normalized)
-
-
-def _registry_package_to_technology_map() -> dict[str, str]:
-    """Build package-name aliases from the bundled ingestion registry.
-
-    This keeps technology detection aligned with ``src/ingestion/registry.json``
-    so adding a new library there automatically improves auto-detection.
-    """
-    registry_path = Path(__file__).resolve().parents[1] / "ingestion" / "registry.json"
-    try:
-        data = json.loads(registry_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-    libraries = data.get("libraries")
-    if not isinstance(libraries, list):
-        return {}
-
-    package_map: dict[str, str] = {}
-    for entry in libraries:
-        if not isinstance(entry, dict):
-            continue
-        library_id = entry.get("library_id")
-        package_names = entry.get("package_names", [])
-        if not isinstance(library_id, str) or not library_id.strip():
-            continue
-        if not isinstance(package_names, list):
-            continue
-        for package_name in package_names:
-            if not isinstance(package_name, str):
-                continue
-            normalized = package_name.strip().lower()
-            if not normalized:
-                continue
-            package_map[normalized] = library_id.strip()
-
-    return package_map
 
 
 def _resolve_project_id(project_id: str | None, project_root: Path) -> str:

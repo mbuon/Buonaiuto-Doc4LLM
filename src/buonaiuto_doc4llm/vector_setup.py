@@ -96,16 +96,12 @@ def create_qdrant_retriever_and_indexer(
 
         client = QdrantClient(path=str(qdrant_path))
 
-        # Create collection if it doesn't exist
+        # Create collection if it doesn't exist.
+        # Attempt dense+sparse (hybrid) config for true BM25 hybrid search;
+        # fall back to dense-only on older qdrant-client versions.
         collections = [c.name for c in client.get_collections().collections]
         if COLLECTION_NAME not in collections:
-            client.create_collection(
-                collection_name=COLLECTION_NAME,
-                vectors_config=VectorParams(
-                    size=embedding_dim,
-                    distance=Distance.COSINE,
-                ),
-            )
+            _create_collection(client, COLLECTION_NAME, embedding_dim)
             logger.info(
                 "Created Qdrant collection '%s' (dim=%d)",
                 COLLECTION_NAME, embedding_dim,
@@ -130,8 +126,17 @@ def create_qdrant_retriever_and_indexer(
             "qdrant_path": None,
         }
 
+    # Check if collection uses named vectors (hybrid config)
+    _named = False
+    try:
+        info = client.get_collection(COLLECTION_NAME)
+        _named = isinstance(getattr(info.config.params, "vectors", None), dict)
+    except Exception:
+        pass
+
     qdrant_hybrid = QdrantHybridClient(
         client=client, collection_name=COLLECTION_NAME, embedder=router,
+        named_vectors=_named,
     )
     retriever = HybridRetriever(qdrant_client=qdrant_hybrid)
 
@@ -250,6 +255,31 @@ def _release_stale_qdrant_lock(qdrant_path: Path) -> None:
         logger.info("Qdrant lock file removed: %s", lock_file)
     except OSError as exc:
         logger.warning("Could not remove Qdrant lock file: %s", exc)
+
+
+def _create_collection(client: Any, collection_name: str, embedding_dim: int) -> None:
+    """Create a Qdrant collection, preferring dense+sparse for hybrid search."""
+    from qdrant_client.models import Distance, VectorParams  # type: ignore[import-untyped]
+
+    try:
+        from qdrant_client.models import (  # type: ignore[import-untyped]
+            SparseVectorParams, SparseIndexParams,
+        )
+        client.create_collection(
+            collection_name=collection_name,
+            vectors_config={"dense": VectorParams(size=embedding_dim, distance=Distance.COSINE)},
+            sparse_vectors_config={
+                "sparse": SparseVectorParams(index=SparseIndexParams(on_disk=False)),
+            },
+        )
+        logger.info("Collection '%s' created with dense+sparse vectors", collection_name)
+    except Exception:
+        # Older qdrant-client — create dense-only collection
+        client.create_collection(
+            collection_name=collection_name,
+            vectors_config=VectorParams(size=embedding_dim, distance=Distance.COSINE),
+        )
+        logger.info("Collection '%s' created with dense vectors only", collection_name)
 
 
 def _detect_embedding_dim(provider: Any) -> int:

@@ -457,6 +457,37 @@ PYTHONPATH=/path/to/Buonaiuto-Doc4LLM/src \
 
 ---
 
+## Quick-start launchers
+
+Interactive launcher scripts at the repo root pick which mode to start without needing to remember the full command line.
+
+**macOS / Linux:**
+
+```bash
+./run.sh
+```
+
+**Windows:**
+
+```cmd
+run.bat
+```
+
+Both prompt for one of four options:
+
+| Option | Command it runs | When to use |
+|---|---|---|
+| 1 | `serve` | MCP stdio server only (for LLM clients like Claude Code / Cursor — **no website**) |
+| 2 | `serve --dashboard` | MCP stdio server **and** web dashboard at http://127.0.0.1:8420 |
+| 3 | `dashboard` | Web dashboard only at http://127.0.0.1:8420 (no MCP stdio) |
+| 4 | `watch` | Watch `docs_center/` for changes and auto re-scan |
+
+Override the Python interpreter with the `PYTHON_BIN` environment variable if needed (defaults to `/opt/anaconda3/bin/python` on macOS, system `python` / `py` on Windows).
+
+> **Note:** plain `serve` (option 1) is an MCP stdio server — it blocks on `stdin` waiting for JSON-RPC requests, which is why it looks "frozen" in a terminal. That is the expected behaviour for MCP clients. Pick option 2 or 3 if you want a website in your browser.
+
+---
+
 ## CLI reference
 
 ```bash

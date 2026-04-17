@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -82,3 +84,78 @@ def test_sanitize_arguments_boundary_at_max_string_len() -> None:
     assert sanitize_arguments(at_limit) == at_limit
     # one over → truncated
     assert sanitize_arguments(over_limit).startswith("<truncated>")
+
+
+def test_record_and_query_session(tmp_path, store: InteractionLogStore) -> None:
+    store.record_session(
+        session_id="s-1",
+        project_id="my-app",
+        workspace_path="/tmp/my-app",
+        client_name="claude-code",
+        client_version="0.2.103",
+    )
+    rows = store.list_sessions()
+    assert len(rows) == 1
+    assert rows[0]["session_id"] == "s-1"
+    assert rows[0]["project_id"] == "my-app"
+    assert rows[0]["client_name"] == "claude-code"
+
+
+def test_record_interaction_persists_row(tmp_path, store: InteractionLogStore) -> None:
+    store.record_session(
+        session_id="s-2", project_id="p", workspace_path="/tmp/p",
+        client_name="cli", client_version="0.1",
+    )
+    store.record_interaction(
+        session_id="s-2",
+        project_id="p",
+        tool_name="search_docs",
+        arguments={"technology": "react", "query": "useState"},
+        result_chars=2048,
+        error=None,
+        latency_ms=37,
+    )
+    rows = store.list_interactions(project_id="p")
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["tool_name"] == "search_docs"
+    assert r["latency_ms"] == 37
+    assert r["result_chars"] == 2048
+    assert r["error"] is None
+    assert json.loads(r["arguments_json"]) == {"technology": "react", "query": "useState"}
+
+
+def test_record_interaction_truncates_long_argument_strings(store: InteractionLogStore) -> None:
+    store.record_session(session_id="s-3", project_id="p", workspace_path=None,
+                         client_name=None, client_version=None)
+    big = "z" * 10_000
+    store.record_interaction(
+        session_id="s-3", project_id="p", tool_name="read_doc",
+        arguments={"content": big}, result_chars=10, error=None, latency_ms=1,
+    )
+    rows = store.list_interactions(project_id="p")
+    stored = json.loads(rows[0]["arguments_json"])
+    assert stored["content"].startswith("<truncated>")
+
+
+def test_record_interaction_swallows_sqlite_errors(store: InteractionLogStore, monkeypatch, capsys) -> None:
+    def boom() -> sqlite3.Connection:
+        raise sqlite3.OperationalError("disk is full")
+
+    monkeypatch.setattr(store, "_connect", boom)
+    # Should not raise
+    store.record_interaction(
+        session_id="x", project_id=None, tool_name="t",
+        arguments={}, result_chars=0, error=None, latency_ms=0,
+    )
+    assert "disk is full" in capsys.readouterr().err
+
+
+def test_record_session_swallows_sqlite_errors(store: InteractionLogStore, monkeypatch, capsys) -> None:
+    def boom() -> sqlite3.Connection:
+        raise sqlite3.OperationalError("locked")
+
+    monkeypatch.setattr(store, "_connect", boom)
+    store.record_session(session_id="s", project_id=None, workspace_path=None,
+                         client_name=None, client_version=None)
+    assert "locked" in capsys.readouterr().err

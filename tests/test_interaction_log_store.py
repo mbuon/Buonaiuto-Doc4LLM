@@ -40,3 +40,33 @@ def test_ensure_schema_is_idempotent(tmp_path: Path, store: InteractionLogStore)
     # Second call must not raise
     store.ensure_schema()
     store.ensure_schema()
+
+
+from buonaiuto_doc4llm.interaction_log import sanitize_arguments
+
+
+def test_sanitize_arguments_truncates_long_strings() -> None:
+    big = "x" * 10_000
+    out = sanitize_arguments({"query": big, "short": "ok"})
+    assert out["short"] == "ok"
+    assert out["query"].startswith("<truncated>")
+    assert "10000 chars" in out["query"]
+
+
+def test_sanitize_arguments_recurses_into_lists_and_dicts() -> None:
+    big = "y" * 600
+    out = sanitize_arguments({"nested": {"deep": [big, "fine"]}, "kept": 42})
+    assert out["nested"]["deep"][0].startswith("<truncated>")
+    assert out["nested"]["deep"][1] == "fine"
+    assert out["kept"] == 42
+
+
+def test_sanitize_arguments_short_strings_pass_through() -> None:
+    out = sanitize_arguments({"a": "hello", "b": ["world", 1, None, True]})
+    assert out == {"a": "hello", "b": ["world", 1, None, True]}
+
+
+def test_sanitize_arguments_handles_non_dict_input() -> None:
+    # Tool call might pass a list or a scalar; don't crash
+    assert sanitize_arguments("x" * 10) == "x" * 10
+    assert sanitize_arguments(["x" * 700])[0].startswith("<truncated>")

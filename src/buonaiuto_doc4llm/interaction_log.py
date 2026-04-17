@@ -52,3 +52,22 @@ class InteractionLogStore:
     def ensure_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(SCHEMA_SQL)
+
+
+def sanitize_arguments(value: Any) -> Any:
+    """Recursively truncate overlong string fields before persistence.
+
+    Strings longer than MAX_STRING_LEN are replaced with a short sentinel
+    that preserves the original length so the log stays legible but small.
+    """
+    if isinstance(value, str):
+        if len(value) > MAX_STRING_LEN:
+            return TRUNCATION_TEMPLATE.format(n=len(value))
+        return value
+    if isinstance(value, dict):
+        return {k: sanitize_arguments(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [sanitize_arguments(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(sanitize_arguments(v) for v in value)
+    return value

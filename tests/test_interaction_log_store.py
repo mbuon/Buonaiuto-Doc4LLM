@@ -70,3 +70,15 @@ def test_sanitize_arguments_handles_non_dict_input() -> None:
     # Tool call might pass a list or a scalar; don't crash
     assert sanitize_arguments("x" * 10) == "x" * 10
     assert sanitize_arguments(["x" * 700])[0].startswith("<truncated>")
+
+
+def test_sanitize_arguments_boundary_at_max_string_len() -> None:
+    from buonaiuto_doc4llm.interaction_log import MAX_STRING_LEN
+
+    at_limit = "a" * MAX_STRING_LEN
+    over_limit = "a" * (MAX_STRING_LEN + 1)
+
+    # exactly MAX_STRING_LEN chars → kept verbatim (rule is "longer than")
+    assert sanitize_arguments(at_limit) == at_limit
+    # one over → truncated
+    assert sanitize_arguments(over_limit).startswith("<truncated>")

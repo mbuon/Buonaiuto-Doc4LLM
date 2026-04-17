@@ -521,8 +521,13 @@ PYTHONPATH=src python -m buonaiuto_doc4llm ack my-project
 # Install a project (auto-detect technologies)
 PYTHONPATH=src python -m buonaiuto_doc4llm install-project /path/to/my-project
 
-# Schedule daily automatic fetch (macOS launchd / Linux crontab)
-PYTHONPATH=src python -m buonaiuto_doc4llm schedule install           # 04:00 default
+# Refresh docs for every active project (≥1 MCP call in last N days)
+PYTHONPATH=src python -m buonaiuto_doc4llm refresh-active
+PYTHONPATH=src python -m buonaiuto_doc4llm refresh-active --dry-run
+PYTHONPATH=src python -m buonaiuto_doc4llm refresh-active --days 30
+
+# Schedule automatic fetch + active-project refresh (macOS launchd / Linux crontab)
+PYTHONPATH=src python -m buonaiuto_doc4llm schedule install           # daily fetch 04:00 + refresh-active every 3 days at 04:15
 PYTHONPATH=src python -m buonaiuto_doc4llm schedule install --hour 2 --minute 30
 PYTHONPATH=src python -m buonaiuto_doc4llm schedule status
 PYTHONPATH=src python -m buonaiuto_doc4llm schedule uninstall
@@ -578,7 +583,41 @@ PYTHONPATH=src python -m buonaiuto_doc4llm install-project /path/to/my-project
 
 ### Auto-bootstrap on MCP initialize
 
-If your MCP client sends workspace context in the `initialize` call (Claude Code does this automatically), the entire flow runs without any manual step — the server bootstraps the project on first connection.
+If your MCP client sends workspace context in the `initialize` call (Claude Code, Cursor, Windsurf all do this automatically), the entire flow runs without any manual step — the server bootstraps the project on first connection.
+
+On every MCP `initialize`:
+
+1. The server reads the workspace path from `rootUri` / `workspaceFolders[0].uri`.
+2. It looks for `docs_center/projects/<basename>.json`.
+3. **If the file does not exist** → it auto-runs `install_project` for that path (on a background thread, so the MCP handshake returns instantly). First time you connect from a new folder, you get a subscription file with no manual step.
+4. **If the file exists and its `mtime` is less than 24 hours old** → it's reused as-is. No fetching.
+5. **If the file exists and is older than 24 hours** → `install_project` re-runs to pick up any dependencies you added since the last refresh.
+
+The session is pinned to that `project_id`, so every subsequent tool call is logged against the project (see [Per-project MCP interaction log](#per-project-mcp-interaction-log) below).
+
+### Periodic refresh of active projects (every 3 days)
+
+A scheduled job keeps documentation fresh for every project that has actually been calling the MCP server — "active" means at least one interaction in the last 30 days.
+
+```bash
+# Manual run
+PYTHONPATH=src python -m buonaiuto_doc4llm refresh-active
+PYTHONPATH=src python -m buonaiuto_doc4llm refresh-active --dry-run
+PYTHONPATH=src python -m buonaiuto_doc4llm refresh-active --days 30
+```
+
+What it does for every active project:
+
+1. If `docs_center/projects/<id>.json` is older than 24h → re-run `install_project` so newly-added dependencies are detected.
+2. Fetch fresh docs for every subscribed technology (deduplicated across projects, so `react` is fetched once even if five projects use it). Conditional HTTP (ETag / If-Modified-Since) means unchanged sources cost nothing.
+3. `scan()` once at the end to index any new/changed files.
+
+**Scheduled automatically** — `schedule install` now registers two cron entries:
+
+- **Daily** `fetch --all` at 04:00 (existing behaviour — refreshes every registry entry, active or not)
+- **Every 3 days** `refresh-active` at 04:15 (new — focuses on projects that matter)
+
+Both are installed / uninstalled together by `schedule install` / `schedule uninstall`, and `schedule status` reports both.
 
 ---
 
@@ -768,13 +807,29 @@ Requires: `pip install -e ".[dashboard]"`
 - Filter by technology or event type
 - Shows timestamp, technology, relative path, and event type for each entry
 
+### Per-project MCP interaction log
+
+Every MCP tool call is recorded against the project that triggered it, with zero manual attribution: the workspace path sent on `initialize` is resolved to a `docs_center/projects/<id>.json` file once, and every subsequent tool call in that session is stamped with the resolved `project_id`.
+
+**What is recorded:** timestamp, tool name, arguments (string fields longer than 500 chars are truncated), result size in chars, latency in ms, error message if any, client name/version.
+
+**Retention:** 30 days, pruned on every `scan` and on each log-page render.
+
+**View it:**
+- Per-project summary on `/projects` — "last used 2h ago · 1,247 calls / 30d"
+- Full log at `/projects/<project_id>/log` — summary header, per-day bar chart, top-tools panel, and filterable paginated table (Tool / Timeframe / Errors-only filters)
+- Sessions whose workspace couldn't be matched to any project file are grouped under **"Unattributed sessions (N)"** at the bottom of the projects list
+
+**Why this matters:** if an MCP client is configured but the server never hears from it, you can see that. If a project is hammering a specific tool, you can see that too. No more guessing whether Claude Code is actually using your local docs.
+
 #### Fetch & Schedule `/schedule`
-- **Install schedule** — set up a daily automatic fetch via macOS launchd or Linux crontab
-- Configure hour and minute for the daily run (default: 04:00)
-- **Uninstall schedule** — remove the cron job
-- Current schedule status
+- **Install schedule** — set up the automatic fetch cron jobs via macOS launchd or Linux crontab. Two entries are installed together:
+  - Daily `fetch --all` at 04:00 (default, configurable hour/minute)
+  - Every 3 days `refresh-active` at 04:15 — re-runs `install_project` on any project whose file is >24h old (picks up new dependencies) and refreshes web docs for every technology subscribed by an active project
+- **Uninstall schedule** — removes both cron entries
+- Current schedule status (reports both entries)
 - Fetch state table — ETag, Last-Modified, and last fetch timestamp per technology
-- Manual **Scan** and **Fetch All** buttons
+- Manual **Scan**, **Fetch All**, and **Refresh Active Projects** buttons
 
 ---
 

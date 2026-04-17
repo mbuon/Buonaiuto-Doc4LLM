@@ -751,8 +751,17 @@ Requires: `pip install -e ".[dashboard]"`
 #### Projects `/projects`
 - All registered projects with their technology subscriptions
 - Unread update count per project
+- **Last-used / call-count summary** per project — answers "is this project actually calling the MCP server?" at a glance ("last used 2h ago · 1,247 calls / 30d")
 - **Install Project** form — enter a project path to auto-detect technologies and bootstrap docs
 - **Acknowledge** button — mark all updates as read for a project
+- **View Log** button per project — opens `/projects/<project_id>/log`, a full MCP interaction log for that project. Attribution is automatic: on `initialize` the server resolves the client's workspace path to the matching `docs_center/projects/*.json` entry and stamps every subsequent tool call in the session with that `project_id`. Sessions that can't be resolved are grouped under **"Unattributed sessions (N)"** at the bottom of the page.
+- **Per-project log page** `/projects/<project_id>/log` — includes:
+  - Summary header: last used, total calls / 30d, unique tools, sessions, error rate, client breakdown (e.g. `claude-code 0.2.103 (900), cursor 0.42 (347)`)
+  - Per-day bar chart of call volume (last 30 days, inline SVG)
+  - Top tools panel with per-tool call counts
+  - Recent-calls table with **Tool**, **Timeframe**, and **Errors-only** filters; columns: timestamp, tool name, key arguments (e.g. `react, "useState"` for `search_docs`), latency, result size, status
+  - HTMX-driven paging (50 rows per page)
+- **30-day retention** — interaction rows are pruned on every `scan` and on each log-page load. Argument strings longer than 500 chars are truncated before storage so large document bodies never bloat the log.
 
 #### Activity `/activity`
 - Full timeline of all documentation change events (added, updated, deleted)

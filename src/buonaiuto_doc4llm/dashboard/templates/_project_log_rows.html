@@ -1,0 +1,22 @@
+{% for row in rows %}
+<tr>
+  <td class="text-muted">{{ row.created_at | humanize_timedelta }}</td>
+  <td><code>{{ row.tool_name }}</code></td>
+  <td>{{ row.tool_name | mcp_args_summary(row.arguments_json | fromjson) }}</td>
+  <td style="text-align: right;">{{ row.latency_ms }}ms</td>
+  <td style="text-align: right;">{{ (row.result_chars or 0) | filesizeformat }}</td>
+  <td>
+    {% if row.error %}
+      <span class="badge badge-red" title="{{ row.error }}">error</span>
+    {% else %}
+      <span class="badge badge-green">ok</span>
+    {% endif %}
+  </td>
+</tr>
+{% endfor %}
+{% if next_offset %}
+<tr hx-get="/projects/{{ project_id | urlencode }}/log/rows?offset={{ next_offset }}"
+    hx-trigger="revealed" hx-swap="outerHTML">
+  <td colspan="6" class="text-center text-muted">Loading more…</td>
+</tr>
+{% endif %}

@@ -53,9 +53,16 @@
       {% else %}
       <span class="badge badge-muted">up to date</span>
       {% endif %}
+      <a href="/projects/{{ project.project_id | urlencode }}/log" class="btn btn-sm">
+        View log
+      </a>
     </div>
   </div>
   <div class="card-body">
+    <div class="text-muted" style="font-size: 0.9em; margin-bottom: 8px;">
+      last used {{ project.last_used_at | humanize_timedelta }}
+      · {{ project.call_count_30d or 0 }} calls / 30d
+    </div>
     <div class="form-label">Subscribed Technologies</div>
     <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px;">
       {% for tech in project.technologies %}
@@ -75,6 +82,22 @@
     <div class="empty-state">
       <div class="icon">&#9733;</div>
       <div class="msg">No projects registered. Install a project to get started.</div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if unattributed_sessions %}
+<div class="card">
+  <div class="card-header">
+    <span class="card-title text-amber">Unattributed sessions ({{ unattributed_sessions | length }})</span>
+    <a href="/projects/unattributed/log" class="btn btn-sm">View log</a>
+  </div>
+  <div class="card-body">
+    <div class="text-muted" style="font-size: 0.9em;">
+      MCP sessions whose workspace path did not match any
+      <code>docs_center/projects/*.json</code> file. Run <code>install_project</code>
+      against the folder to pin these under a project.
     </div>
   </div>
 </div>

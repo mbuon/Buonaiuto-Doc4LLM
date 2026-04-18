@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Buonaiuto Doc4LLM &middot; {{ project_id }} log{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-title">
+    {% if is_unattributed %}Unattributed sessions{% else %}{{ project_id }}{% endif %}
+    &middot; MCP interaction log
+  </div>
+  <div class="page-subtitle">
+    Last used {{ summary.last_used_at | humanize_timedelta }}
+    &middot; {{ summary.total_calls }} calls / {{ summary.window_days }}d
+    &middot; {{ summary.unique_tools }} tools
+    &middot; {{ summary.total_sessions }} sessions
+    &middot; error rate {{ '%.1f' | format(summary.error_rate * 100) }}%
+  </div>
+  {% if summary.client_breakdown %}
+  <div class="text-muted" style="font-size: 0.9em; margin-top: 4px;">
+    Clients:
+    {% for c in summary.client_breakdown %}
+      {{ c.client_name or '—' }}{% if c.client_version %} {{ c.client_version }}{% endif %}
+      ({{ c.count }}){% if not loop.last %},{% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 16px;">
+  <div class="card">
+    <div class="card-header"><span class="card-title">Calls per day</span></div>
+    <div class="card-body">
+      {% set max_count = (summary.calls_per_day | map(attribute='count') | list | max) or 1 %}
+      <svg width="100%" height="120" viewBox="0 0 320 120" preserveAspectRatio="none">
+        {% for d in summary.calls_per_day %}
+          {% set bar_h = (d.count / max_count * 110) if max_count else 0 %}
+          <rect x="{{ loop.index0 * 10 + 2 }}" y="{{ 120 - bar_h }}"
+                width="8" height="{{ bar_h }}" fill="#4a90e2">
+            <title>{{ d.day }}: {{ d.count }} calls</title>
+          </rect>
+        {% endfor %}
+      </svg>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header"><span class="card-title">Top tools</span></div>
+    <div class="card-body">
+      {% if summary.tool_counts %}
+      <table style="width: 100%;">
+        {% for t in summary.tool_counts[:10] %}
+        <tr>
+          <td><code>{{ t.tool_name }}</code></td>
+          <td style="text-align: right;">{{ t.count }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="text-muted">No calls yet.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header" style="display: flex; gap: 12px; align-items: center;">
+    <span class="card-title">Recent calls</span>
+    <form hx-get="/projects/{{ project_id | urlencode }}/log/rows"
+          hx-target="#log-rows" hx-swap="innerHTML"
+          style="display: flex; gap: 8px; margin-left: auto;">
+      <input type="text" name="tool_name" class="input" style="max-width: 180px;"
+             placeholder="Filter tool (e.g. search_docs)">
+      <select name="since_hours" class="input">
+        <option value="1">Last 1h</option>
+        <option value="24">Last 24h</option>
+        <option value="168">Last 7d</option>
+        <option value="720" selected>Last 30d</option>
+      </select>
+      <label style="font-size: 0.9em;">
+        <input type="checkbox" name="errors_only" value="true"> Errors only
+      </label>
+      <button class="btn btn-sm">Filter</button>
+    </form>
+  </div>
+  <div class="card-body">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Tool</th>
+          <th>Key args</th>
+          <th style="text-align: right;">Latency</th>
+          <th style="text-align: right;">Size</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="log-rows">
+        {% include "_project_log_rows.html" %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

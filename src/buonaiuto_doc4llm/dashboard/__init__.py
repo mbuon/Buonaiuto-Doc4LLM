@@ -61,6 +61,13 @@ def create_app(base_dir: Path | str) -> FastAPI:
     # Enable autoescape for all HTML templates to prevent XSS.
     templates.env.autoescape = select_autoescape(["html", "htm"])
     templates.env.filters["filesizeformat"] = filesizeformat
+    from buonaiuto_doc4llm.dashboard._filters import (
+        fromjson, humanize_timedelta, mcp_args_summary, truncate_chars,
+    )
+    templates.env.filters["mcp_args_summary"] = mcp_args_summary
+    templates.env.filters["humanize_timedelta"] = humanize_timedelta
+    templates.env.filters["truncate_chars"] = truncate_chars
+    templates.env.filters["fromjson"] = fromjson
 
     # Attach to app state for routes
     app.state.service = service

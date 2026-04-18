@@ -109,6 +109,10 @@ def register_routes(app: FastAPI) -> None:
         for p in projects:
             updates_payload = service.list_project_updates(p["project_id"], unread_only=True)
             p["unread_count"] = updates_payload["unseen_count"]
+            # Enrich with MCP interaction summary (answers "is this project alive?")
+            summary = service.get_project_interaction_summary(p["project_id"], days=30)
+            p["last_used_at"] = summary["last_used_at"]
+            p["call_count_30d"] = summary["total_calls"]
         return projects
 
     def _load_registry() -> list[dict[str, Any]]:
@@ -263,14 +267,65 @@ def register_routes(app: FastAPI) -> None:
     ) -> HTMLResponse:
         service = request.app.state.service
         project_list = _get_projects_with_unread(service)
+        unattributed = service.list_unattributed_mcp_sessions(days=30)
         ctx = _ctx(
             request,
             "projects",
             projects=project_list,
+            unattributed_sessions=unattributed,
             flash_msg=flash_msg,
             flash_type=flash_type,
         )
         return _render(request, "projects.html", ctx)
+
+    @app.get("/projects/{project_id}/log", response_class=HTMLResponse)
+    async def project_log(request: Request, project_id: str) -> HTMLResponse:
+        service = request.app.state.service
+        service.prune_mcp_interactions(days=30)
+        is_unattributed = project_id == "unattributed"
+        effective_id: str | None = None if is_unattributed else project_id
+        summary = service.get_project_interaction_summary(effective_id, days=30)
+        rows = service.list_project_interactions(effective_id, limit=50)
+        ctx = _ctx(
+            request,
+            "projects",
+            project_id=project_id,
+            summary=summary,
+            rows=rows,
+            is_unattributed=is_unattributed,
+            next_offset=50 if len(rows) == 50 else None,
+        )
+        return _render(request, "project_log.html", ctx)
+
+    @app.get("/projects/{project_id}/log/rows", response_class=HTMLResponse)
+    async def project_log_rows(
+        request: Request,
+        project_id: str,
+        tool_name: str = "",
+        since_hours: int = 720,  # 30d
+        errors_only: bool = False,
+        offset: int = 0,
+    ) -> HTMLResponse:
+        from datetime import datetime, timedelta, timezone
+        service = request.app.state.service
+        is_unattributed = project_id == "unattributed"
+        effective_id: str | None = None if is_unattributed else project_id
+        since_iso = (
+            datetime.now(timezone.utc) - timedelta(hours=since_hours)
+        ).isoformat(timespec="seconds")
+        rows = service.list_project_interactions(
+            effective_id,
+            limit=50,
+            offset=offset,
+            tool_name=tool_name or None,
+            since=since_iso,
+            errors_only=errors_only,
+        )
+        return _render(request, "_project_log_rows.html", {
+            "rows": rows,
+            "project_id": project_id,
+            "next_offset": offset + 50 if len(rows) == 50 else None,
+        })
 
     @app.get("/activity", response_class=HTMLResponse)
     async def activity(

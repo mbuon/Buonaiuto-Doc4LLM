@@ -55,3 +55,79 @@ def test_fromjson_handles_none_and_invalid() -> None:
     assert fromjson("") == {}
     assert fromjson("{not json") == {}
     assert fromjson('{"a": 1}') == {"a": 1}
+
+
+# ─── Dashboard integration tests (Task 14/15) ─────────────────────────────
+
+from pathlib import Path
+from fastapi.testclient import TestClient
+
+
+@pytest.fixture
+def client(tmp_path):
+    from buonaiuto_doc4llm.dashboard import create_app
+
+    (tmp_path / "docs_center" / "technologies").mkdir(parents=True)
+    (tmp_path / "docs_center" / "projects").mkdir(parents=True)
+    (tmp_path / "docs_center" / "projects" / "my-app.json").write_text(
+        '{"project_id":"my-app","name":"my-app","technologies":[]}'
+    )
+
+    app = create_app(str(tmp_path))
+    with TestClient(app) as c:
+        yield c, tmp_path
+
+
+def _seed_interaction(tmp_path, pid: str, tool: str = "search_docs") -> None:
+    from buonaiuto_doc4llm.service import DocsHubService
+    svc = DocsHubService(tmp_path)
+    svc.record_mcp_session(session_id=f"s-{tool}-{pid}", project_id=pid, workspace_path=None,
+                           client_name="c", client_version="1")
+    svc.record_mcp_interaction(session_id=f"s-{tool}-{pid}", project_id=pid, tool_name=tool,
+                               arguments={"technology": "react", "query": "x"},
+                               result_chars=100, error=None, latency_ms=9)
+
+
+def test_projects_page_shows_last_used_for_active_project(client) -> None:
+    c, tmp_path = client
+    _seed_interaction(tmp_path, "my-app")
+    resp = c.get("/projects")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "my-app" in body
+    assert "calls / 30d" in body
+    assert "View log" in body
+
+
+def test_project_log_page_renders(client) -> None:
+    c, tmp_path = client
+    _seed_interaction(tmp_path, "my-app")
+    resp = c.get("/projects/my-app/log")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "MCP interaction log" in body
+    assert "search_docs" in body
+    assert "<svg" in body  # inline chart present
+
+
+def test_project_log_rows_filter_by_tool(client) -> None:
+    c, tmp_path = client
+    _seed_interaction(tmp_path, "my-app", tool="search_docs")
+    _seed_interaction(tmp_path, "my-app", tool="read_doc")
+    resp = c.get("/projects/my-app/log/rows?tool_name=search_docs")
+    assert resp.status_code == 200
+    assert "search_docs" in resp.text
+    assert "read_doc" not in resp.text
+
+
+def test_unattributed_sessions_card_visible(client) -> None:
+    c, tmp_path = client
+    from buonaiuto_doc4llm.service import DocsHubService
+    svc = DocsHubService(tmp_path)
+    svc.record_mcp_session(session_id="u", project_id=None, workspace_path=None,
+                           client_name="c", client_version="1")
+    svc.record_mcp_interaction(session_id="u", project_id=None, tool_name="t",
+                               arguments={}, result_chars=0, error=None, latency_ms=1)
+    resp = c.get("/projects")
+    assert resp.status_code == 200
+    assert "Unattributed sessions" in resp.text

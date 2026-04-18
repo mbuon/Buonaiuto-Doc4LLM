@@ -192,3 +192,88 @@ def test_install_project_persists_workspace_path(tmp_path: Path) -> None:
     pf = tmp_path / "docs_center" / "projects" / "fake-project.json"
     data = json.loads(pf.read_text())
     assert data["workspace_path"] == str(project_dir.resolve())
+
+
+# ─── Task 9: MCPServer session pinning + tool-call wrapper ──────────────
+
+from buonaiuto_doc4llm.mcp_server import MCPServer
+
+
+def test_mcp_server_pins_session_on_initialize(tmp_path) -> None:
+    (tmp_path / "docs_center" / "technologies").mkdir(parents=True)
+    (tmp_path / "docs_center" / "projects").mkdir(parents=True)
+    # Pre-create a fresh project file so no install runs
+    (tmp_path / "docs_center" / "projects" / "my-app.json").write_text(
+        json.dumps({"project_id": "my-app", "name": "my-app",
+                    "technologies": [], "workspace_path": "/tmp/my-app"})
+    )
+
+    server = MCPServer(str(tmp_path))
+    response = server.handle_request({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "clientInfo": {"name": "claude-code", "version": "0.2.103"},
+            "rootUri": "file:///tmp/my-app",
+        },
+    })
+    assert "result" in response
+    assert server._session_id is not None
+    assert server._session_project_id == "my-app"
+
+    rows = server.service.interaction_log.list_sessions()
+    assert any(r["session_id"] == server._session_id for r in rows)
+
+
+def test_mcp_server_records_interaction_on_tool_call(tmp_path) -> None:
+    (tmp_path / "docs_center" / "technologies" / "react").mkdir(parents=True)
+    (tmp_path / "docs_center" / "technologies" / "react" / "hooks.md").write_text(
+        "# useState\nUse this to add state to components."
+    )
+    (tmp_path / "docs_center" / "projects").mkdir(parents=True)
+    (tmp_path / "docs_center" / "projects" / "my-app.json").write_text(
+        json.dumps({"project_id": "my-app", "name": "my-app",
+                    "technologies": ["react"], "workspace_path": "/tmp/my-app"})
+    )
+
+    server = MCPServer(str(tmp_path))
+    server.service.scan()
+    server.handle_request({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"rootUri": "file:///tmp/my-app"},
+    })
+    server.handle_request({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "search_docs",
+                   "arguments": {"technology": "react", "query": "useState"}},
+    })
+
+    rows = server.service.list_project_interactions("my-app")
+    assert len(rows) == 1
+    assert rows[0]["tool_name"] == "search_docs"
+    assert rows[0]["latency_ms"] >= 0
+    assert rows[0]["result_chars"] and rows[0]["result_chars"] > 0
+    assert rows[0]["error"] is None
+
+
+def test_mcp_server_logging_failure_does_not_break_tool_call(tmp_path, monkeypatch) -> None:
+    (tmp_path / "docs_center" / "technologies").mkdir(parents=True)
+    (tmp_path / "docs_center" / "projects").mkdir(parents=True)
+
+    server = MCPServer(str(tmp_path))
+    server.handle_request({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"rootUri": "file:///tmp/no-such"},
+    })
+
+    # Force record_interaction to raise
+    def boom(**kw):
+        raise RuntimeError("log write failed")
+
+    monkeypatch.setattr(server.service, "record_mcp_interaction", boom)
+
+    response = server.handle_request({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "list_supported_libraries", "arguments": {}},
+    })
+    # Tool call must still return normally
+    assert "result" in response or "error" in response

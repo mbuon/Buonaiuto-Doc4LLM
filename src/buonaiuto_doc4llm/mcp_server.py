@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import traceback
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from .project_bootstrap import ensure_project_installed, extract_workspace_path
 from .service import DocsHubService
 
 
@@ -23,6 +26,8 @@ class MCPServer:
         except Exception:
             pass  # Fall back to lexical search
         self.service = DocsHubService(base, retriever=retriever, indexer=indexer)
+        self._session_id: str | None = None
+        self._session_project_id: str | None = None
 
     def serve(self) -> None:
         for raw_line in sys.stdin:
@@ -509,6 +514,47 @@ class MCPServer:
         ]
 
     def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        started = time.monotonic()
+        error_msg: str | None = None
+        result_chars: int | None = None
+        try:
+            result = self._dispatch_tool(name, arguments)
+            try:
+                result_chars = len(json.dumps(result, default=str))
+            except (TypeError, ValueError):
+                result_chars = None
+            return result
+        except Exception as exc:
+            error_msg = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            if self._session_id is None:
+                # Tool called before initialize — generate a one-shot session
+                self._session_id = str(uuid.uuid4())
+                try:
+                    self.service.record_mcp_session(
+                        session_id=self._session_id,
+                        project_id=None, workspace_path=None,
+                        client_name=None, client_version=None,
+                    )
+                except Exception as exc:
+                    print(f"[mcp_server] record_mcp_session failed: {exc}",
+                          file=sys.stderr)
+            try:
+                self.service.record_mcp_interaction(
+                    session_id=self._session_id,
+                    project_id=self._session_project_id,
+                    tool_name=name,
+                    arguments=arguments,
+                    result_chars=result_chars,
+                    error=error_msg,
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                )
+            except Exception as exc:
+                print(f"[mcp_server] record_mcp_interaction failed: {exc}",
+                      file=sys.stderr)
+
+    def _dispatch_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if name == "scan_docs":
             payload = self.service.scan()
             # Side-effect: probe unresolved packages non-blocking
@@ -649,15 +695,47 @@ class MCPServer:
         }
 
     def _bootstrap_from_initialize_params(self, params: dict[str, Any]) -> dict[str, Any] | None:
-        project_path = self._resolve_project_path(params)
-        if project_path is None:
-            return None
+        workspace_path = extract_workspace_path(params)
+        client_info = params.get("clientInfo") or {}
 
-        project_id = params.get("project_id") or params.get("projectId")
-        return self.service.install_project(
-            project_root=project_path,
-            project_id=project_id if isinstance(project_id, str) else None,
-        )
+        self._session_id = str(uuid.uuid4())
+
+        # Caller explicitly passed a project path/id → synchronous install,
+        # return the full bootstrap summary. This is the classic opt-in path
+        # used by CLI-driven integrations that want confirmation before the
+        # first tool call.
+        explicit = params.get("project_path") or params.get("projectPath")
+        explicit_id = params.get("project_id") or params.get("projectId")
+        bootstrap_summary: dict[str, Any] | None = None
+        if isinstance(explicit, str) and explicit.strip():
+            try:
+                bootstrap_summary = self.service.install_project(
+                    project_root=Path(explicit.strip()),
+                    project_id=explicit_id if isinstance(explicit_id, str) else None,
+                )
+                self._session_project_id = bootstrap_summary.get("project_id")
+            except Exception as exc:
+                print(f"[mcp_server] explicit install_project failed: {exc}",
+                      file=sys.stderr)
+                self._session_project_id = None
+        else:
+            # Workspace-URI path: resolve + auto-install in the background
+            # so the MCP handshake never blocks.
+            self._session_project_id = ensure_project_installed(
+                self.service, workspace_path=workspace_path, wait=False,
+            )
+
+        try:
+            self.service.record_mcp_session(
+                session_id=self._session_id,
+                project_id=self._session_project_id,
+                workspace_path=str(workspace_path) if workspace_path else None,
+                client_name=client_info.get("name") if isinstance(client_info, dict) else None,
+                client_version=client_info.get("version") if isinstance(client_info, dict) else None,
+            )
+        except Exception as exc:
+            print(f"[mcp_server] record_mcp_session failed: {exc}", file=sys.stderr)
+        return bootstrap_summary
 
     @staticmethod
     def _resolve_project_path(params: dict[str, Any]) -> Path | None:

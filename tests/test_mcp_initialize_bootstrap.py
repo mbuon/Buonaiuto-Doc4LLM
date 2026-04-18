@@ -45,6 +45,8 @@ def test_initialize_bootstraps_from_project_path(tmp_path: Path) -> None:
 
 
 def test_initialize_bootstraps_from_workspace_folders_uri(tmp_path: Path) -> None:
+    import time
+
     base_dir = tmp_path / "base"
     project_root = tmp_path / "myproject"
     _write(project_root / "package.json", json.dumps({"dependencies": {"react": "^19.0.0"}}))
@@ -61,9 +63,19 @@ def test_initialize_bootstraps_from_workspace_folders_uri(tmp_path: Path) -> Non
         }
     )
 
-    bootstrap = response["result"]["bootstrap"]
-    assert bootstrap is not None
-    assert bootstrap["project_id"] == "myproject"
+    # Workspace-URI path is async: initialize returns immediately with
+    # bootstrap=None; install runs in the background. Session is pinned
+    # to the predicted project_id (basename) so follow-up tool calls are
+    # attributed correctly.
+    assert response["result"]["bootstrap"] is None
+    assert server._session_project_id == "myproject"
+
+    # Wait for the background install to complete and write the project file.
+    project_file = base_dir / "docs_center" / "projects" / "myproject.json"
+    deadline = time.time() + 30
+    while not project_file.exists() and time.time() < deadline:
+        time.sleep(0.1)
+    assert project_file.exists()
 
 
 def test_initialize_without_workspace_context_keeps_bootstrap_none(tmp_path: Path) -> None:

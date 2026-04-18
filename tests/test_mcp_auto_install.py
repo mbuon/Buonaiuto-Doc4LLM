@@ -277,3 +277,37 @@ def test_mcp_server_logging_failure_does_not_break_tool_call(tmp_path, monkeypat
     })
     # Tool call must still return normally
     assert "result" in response or "error" in response
+
+
+# ─── Task 16: end-to-end smoke test ───────────────────────────────────────
+
+def test_end_to_end_first_connect_installs_and_logs(tmp_path, monkeypatch) -> None:
+    (tmp_path / "docs_center" / "technologies").mkdir(parents=True)
+    (tmp_path / "docs_center" / "projects").mkdir(parents=True)
+
+    # Fake project folder (no dependencies → no web fetch needed)
+    proj = tmp_path / "my-new-project"
+    proj.mkdir()
+    (proj / "package.json").write_text('{"name":"fake","dependencies":{}}')
+
+    server = MCPServer(str(tmp_path))
+
+    server.handle_request({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"rootUri": f"file://{proj}"},
+    })
+    # Wait for the background install to finish and write the project file
+    deadline = time.time() + 30
+    pf = tmp_path / "docs_center" / "projects" / "my-new-project.json"
+    while not pf.exists() and time.time() < deadline:
+        time.sleep(0.1)
+    assert pf.exists(), "auto-install should have written the project file"
+
+    # Follow-up tool call is logged against the project
+    server.handle_request({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "list_supported_libraries", "arguments": {}},
+    })
+    rows = server.service.list_project_interactions("my-new-project")
+    assert len(rows) == 1
+    assert rows[0]["tool_name"] == "list_supported_libraries"

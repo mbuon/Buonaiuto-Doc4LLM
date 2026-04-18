@@ -90,6 +90,16 @@ class InteractionLogStore:
             with self._connect() as conn:
                 conn.execute(
                     """
+                    INSERT INTO mcp_sessions
+                        (session_id, project_id, workspace_path, client_name,
+                         client_version, started_at, last_seen_at)
+                    VALUES (?, ?, NULL, NULL, NULL, ?, ?)
+                    ON CONFLICT(session_id) DO NOTHING
+                    """,
+                    (session_id, project_id, now, now),
+                )
+                conn.execute(
+                    """
                     INSERT INTO mcp_interactions
                         (session_id, project_id, tool_name, arguments_json,
                          result_chars, error, latency_ms, created_at)
@@ -123,6 +133,8 @@ class InteractionLogStore:
                           offset: int = 0, tool_name: str | None = None,
                           since: str | None = None,
                           errors_only: bool = False) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 1000))
+        offset = max(0, int(offset))
         sql = ["SELECT * FROM mcp_interactions WHERE 1=1"]
         args: list[Any] = []
         if project_id is None:

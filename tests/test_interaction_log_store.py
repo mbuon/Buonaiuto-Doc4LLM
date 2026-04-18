@@ -159,3 +159,45 @@ def test_record_session_swallows_sqlite_errors(store: InteractionLogStore, monke
     store.record_session(session_id="s", project_id=None, workspace_path=None,
                          client_name=None, client_version=None)
     assert "locked" in capsys.readouterr().err
+
+
+def test_record_interaction_without_prior_session_creates_stub(store: InteractionLogStore) -> None:
+    # No record_session() call — interaction must still persist AND a stub
+    # session row must be created so listings stay coherent.
+    store.record_interaction(
+        session_id="orphan", project_id="p", tool_name="t",
+        arguments={}, result_chars=0, error=None, latency_ms=1,
+    )
+    rows = store.list_interactions(project_id="p")
+    assert len(rows) == 1
+    sessions = store.list_sessions()
+    assert any(s["session_id"] == "orphan" for s in sessions)
+
+
+def test_record_interaction_preserves_existing_session_fields(store: InteractionLogStore) -> None:
+    store.record_session(
+        session_id="s", project_id="p", workspace_path="/tmp/p",
+        client_name="claude-code", client_version="1.0",
+    )
+    store.record_interaction(
+        session_id="s", project_id="p", tool_name="t",
+        arguments={}, result_chars=0, error=None, latency_ms=1,
+    )
+    sessions = [s for s in store.list_sessions() if s["session_id"] == "s"]
+    assert sessions[0]["client_name"] == "claude-code"
+    assert sessions[0]["workspace_path"] == "/tmp/p"
+
+
+def test_list_interactions_clamps_limit_and_offset(store: InteractionLogStore) -> None:
+    # Seed 5 rows
+    for i in range(5):
+        store.record_interaction(
+            session_id="s", project_id="p", tool_name=f"t{i}",
+            arguments={}, result_chars=0, error=None, latency_ms=1,
+        )
+    # Negative offset is clamped to 0 → still returns all 5
+    assert len(store.list_interactions(project_id="p", offset=-10)) == 5
+    # Limit over 1000 is clamped to 1000 (only 5 rows exist, so we still get 5)
+    assert len(store.list_interactions(project_id="p", limit=10_000_000)) == 5
+    # Limit below 1 is clamped to 1
+    assert len(store.list_interactions(project_id="p", limit=0)) == 1

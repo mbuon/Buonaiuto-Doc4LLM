@@ -156,6 +156,124 @@ class InteractionLogStore:
             rows = conn.execute(" ".join(sql), args).fetchall()
             return [dict(r) for r in rows]
 
+    def get_summary(self, project_id: str | None, *, days: int = 30) -> dict[str, Any]:
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        pid_sql = "project_id IS NULL" if project_id is None else "project_id = ?"
+        pid_args: tuple[Any, ...] = () if project_id is None else (project_id,)
+        with self._connect() as conn:
+            totals = conn.execute(
+                f"SELECT COUNT(*) AS n, MAX(created_at) AS last_used "
+                f"FROM mcp_interactions WHERE {pid_sql} AND created_at >= ?",
+                (*pid_args, since),
+            ).fetchone()
+            total_calls = totals["n"] or 0
+            last_used_at = totals["last_used"]
+
+            error_count = conn.execute(
+                f"SELECT COUNT(*) AS n FROM mcp_interactions "
+                f"WHERE {pid_sql} AND created_at >= ? AND error IS NOT NULL",
+                (*pid_args, since),
+            ).fetchone()["n"] or 0
+
+            tool_counts = [
+                dict(r) for r in conn.execute(
+                    f"SELECT tool_name, COUNT(*) AS count FROM mcp_interactions "
+                    f"WHERE {pid_sql} AND created_at >= ? "
+                    f"GROUP BY tool_name ORDER BY count DESC",
+                    (*pid_args, since),
+                ).fetchall()
+            ]
+
+            per_day_rows = {
+                r["day"]: r["count"] for r in conn.execute(
+                    f"SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS count "
+                    f"FROM mcp_interactions WHERE {pid_sql} AND created_at >= ? "
+                    f"GROUP BY day ORDER BY day",
+                    (*pid_args, since),
+                ).fetchall()
+            }
+
+            session_count = conn.execute(
+                f"SELECT COUNT(DISTINCT session_id) AS n FROM mcp_interactions "
+                f"WHERE {pid_sql} AND created_at >= ?",
+                (*pid_args, since),
+            ).fetchone()["n"] or 0
+
+            if project_id is None:
+                client_sql = (
+                    "SELECT s.client_name, s.client_version, COUNT(*) AS count "
+                    "FROM mcp_interactions i JOIN mcp_sessions s "
+                    "ON s.session_id = i.session_id "
+                    "WHERE i.project_id IS NULL AND i.created_at >= ? "
+                    "GROUP BY s.client_name, s.client_version ORDER BY count DESC"
+                )
+                client_args: tuple[Any, ...] = (since,)
+            else:
+                client_sql = (
+                    "SELECT s.client_name, s.client_version, COUNT(*) AS count "
+                    "FROM mcp_interactions i JOIN mcp_sessions s "
+                    "ON s.session_id = i.session_id "
+                    "WHERE i.project_id = ? AND i.created_at >= ? "
+                    "GROUP BY s.client_name, s.client_version ORDER BY count DESC"
+                )
+                client_args = (project_id, since)
+            client_breakdown = [dict(r) for r in conn.execute(client_sql, client_args).fetchall()]
+
+        calls_per_day: list[dict[str, Any]] = []
+        today = datetime.now(timezone.utc).date()
+        for offset in range(days - 1, -1, -1):
+            d = (today - timedelta(days=offset)).isoformat()
+            calls_per_day.append({"day": d, "count": per_day_rows.get(d, 0)})
+
+        return {
+            "project_id": project_id,
+            "last_used_at": last_used_at,
+            "total_calls": total_calls,
+            "total_sessions": session_count,
+            "window_days": days,
+            "unique_tools": len(tool_counts),
+            "calls_per_day": calls_per_day,
+            "tool_counts": tool_counts,
+            "client_breakdown": client_breakdown,
+            "error_rate": (error_count / total_calls) if total_calls else 0.0,
+        }
+
+    def prune(self, *, days: int = 30) -> dict[str, int]:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        try:
+            with self._connect() as conn:
+                deleted_i = conn.execute(
+                    "DELETE FROM mcp_interactions WHERE created_at < ?",
+                    (cutoff,),
+                ).rowcount
+                deleted_s = conn.execute(
+                    "DELETE FROM mcp_sessions "
+                    "WHERE started_at < ? AND session_id NOT IN "
+                    "(SELECT DISTINCT session_id FROM mcp_interactions)",
+                    (cutoff,),
+                ).rowcount
+                return {"deleted_interactions": deleted_i or 0,
+                        "deleted_sessions": deleted_s or 0}
+        except sqlite3.OperationalError as exc:
+            print(f"[interaction_log] prune failed: {exc}", file=sys.stderr)
+            return {"deleted_interactions": 0, "deleted_sessions": 0}
+
+    def list_unattributed_sessions(self, *, days: int = 30) -> list[dict[str, Any]]:
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT s.*, COUNT(i.id) AS call_count, MAX(i.created_at) AS last_used_at
+                  FROM mcp_sessions s
+                  LEFT JOIN mcp_interactions i ON i.session_id = s.session_id
+                 WHERE s.project_id IS NULL AND s.started_at >= ?
+                 GROUP BY s.session_id
+                 ORDER BY s.started_at DESC
+                """,
+                (since,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
 
 def sanitize_arguments(value: Any) -> Any:
     """Recursively truncate overlong string fields before persistence.

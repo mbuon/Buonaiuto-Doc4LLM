@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -201,3 +201,79 @@ def test_list_interactions_clamps_limit_and_offset(store: InteractionLogStore) -
     assert len(store.list_interactions(project_id="p", limit=10_000_000)) == 5
     # Limit below 1 is clamped to 1
     assert len(store.list_interactions(project_id="p", limit=0)) == 1
+
+
+def _insert_raw_interaction(store: InteractionLogStore, *, session_id: str,
+                            project_id: str | None, tool_name: str,
+                            created_at: datetime, error: str | None = None,
+                            latency_ms: int = 10, result_chars: int = 100) -> None:
+    """Bypass the Python helper so we can set created_at in the past."""
+    with store._connect() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO mcp_sessions "
+            "(session_id, project_id, workspace_path, client_name, client_version,"
+            " started_at, last_seen_at) "
+            "VALUES (?, ?, NULL, NULL, NULL, ?, ?)",
+            (session_id, project_id,
+             created_at.isoformat(timespec="seconds"),
+             created_at.isoformat(timespec="seconds")),
+        )
+        conn.execute(
+            "INSERT INTO mcp_interactions "
+            "(session_id, project_id, tool_name, arguments_json, result_chars,"
+            " error, latency_ms, created_at) "
+            "VALUES (?, ?, ?, '{}', ?, ?, ?, ?)",
+            (session_id, project_id, tool_name, result_chars, error, latency_ms,
+             created_at.isoformat(timespec="seconds")),
+        )
+
+
+def test_summary_aggregates(store: InteractionLogStore) -> None:
+    now = datetime.now(timezone.utc)
+    for i in range(5):
+        _insert_raw_interaction(
+            store, session_id="s", project_id="p",
+            tool_name="search_docs", created_at=now - timedelta(minutes=i),
+        )
+    _insert_raw_interaction(
+        store, session_id="s", project_id="p", tool_name="read_doc",
+        created_at=now, error="boom",
+    )
+    s = store.get_summary("p", days=30)
+    assert s["total_calls"] == 6
+    assert s["unique_tools"] == 2
+    tool_counts = {t["tool_name"]: t["count"] for t in s["tool_counts"]}
+    assert tool_counts["search_docs"] == 5
+    assert tool_counts["read_doc"] == 1
+    assert s["error_rate"] == pytest.approx(1 / 6)
+    assert len(s["calls_per_day"]) == 30
+
+
+def test_summary_returns_zero_shape_for_inactive_project(store: InteractionLogStore) -> None:
+    s = store.get_summary("nobody", days=30)
+    assert s["total_calls"] == 0
+    assert s["last_used_at"] is None
+    assert s["tool_counts"] == []
+    assert len(s["calls_per_day"]) == 30
+
+
+def test_prune_deletes_old_interactions_and_orphan_sessions(store: InteractionLogStore) -> None:
+    now = datetime.now(timezone.utc)
+    _insert_raw_interaction(store, session_id="old", project_id="p",
+                            tool_name="t", created_at=now - timedelta(days=45))
+    _insert_raw_interaction(store, session_id="new", project_id="p",
+                            tool_name="t", created_at=now - timedelta(days=1))
+    result = store.prune(days=30)
+    assert result["deleted_interactions"] >= 1
+    assert result["deleted_sessions"] >= 1
+    # New row survives
+    assert len(store.list_interactions(project_id="p")) == 1
+
+
+def test_list_unattributed_sessions(store: InteractionLogStore) -> None:
+    now = datetime.now(timezone.utc)
+    _insert_raw_interaction(store, session_id="u", project_id=None,
+                            tool_name="t", created_at=now)
+    rows = store.list_unattributed_sessions(days=30)
+    assert len(rows) == 1
+    assert rows[0]["session_id"] == "u"

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from buonaiuto_doc4llm.auto_setup import bootstrap_project
+from buonaiuto_doc4llm.interaction_log import InteractionLogStore
 from retrieval.retriever import HybridRetriever, RetrievalDocument, RetrievalQuery, RetrievalResponse
 from telemetry import ensure_trace_id
 
@@ -403,6 +404,7 @@ class DocsHubService:
         self.retriever = retriever or HybridRetriever()
         self.indexer = indexer  # DocIndexer | None
         self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.interaction_log = InteractionLogStore(connect=self._connect)
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -490,6 +492,7 @@ class DocsHubService:
                 );
                 """
             )
+        self.interaction_log.ensure_schema()
 
     def scan(self) -> dict[str, Any]:
         self.sync_projects()
@@ -630,6 +633,7 @@ class DocsHubService:
             except Exception:
                 pass
 
+        self.interaction_log.prune(days=30)
         return {
             "scanned_at": scanned_at,
             "technologies": summaries,
@@ -2186,3 +2190,46 @@ class DocsHubService:
         start = max(0, idx - radius)
         end = min(len(content), idx + len(query) + radius)
         return content[start:end].strip()
+
+    # ──────────────────────────────────────────────────────────────
+    # MCP interaction log — thin delegates to InteractionLogStore
+    # ──────────────────────────────────────────────────────────────
+
+    def record_mcp_session(self, *, session_id: str, project_id: str | None,
+                           workspace_path: str | None, client_name: str | None,
+                           client_version: str | None) -> None:
+        self.interaction_log.record_session(
+            session_id=session_id, project_id=project_id,
+            workspace_path=workspace_path, client_name=client_name,
+            client_version=client_version,
+        )
+
+    def record_mcp_interaction(self, *, session_id: str, project_id: str | None,
+                               tool_name: str, arguments: Any,
+                               result_chars: int | None, error: str | None,
+                               latency_ms: int) -> None:
+        self.interaction_log.record_interaction(
+            session_id=session_id, project_id=project_id,
+            tool_name=tool_name, arguments=arguments,
+            result_chars=result_chars, error=error, latency_ms=latency_ms,
+        )
+
+    def prune_mcp_interactions(self, *, days: int = 30) -> dict[str, int]:
+        return self.interaction_log.prune(days=days)
+
+    def get_project_interaction_summary(self, project_id: str | None,
+                                        days: int = 30) -> dict[str, Any]:
+        return self.interaction_log.get_summary(project_id, days=days)
+
+    def list_project_interactions(self, project_id: str | None, *,
+                                  limit: int = 100, offset: int = 0,
+                                  tool_name: str | None = None,
+                                  since: str | None = None,
+                                  errors_only: bool = False) -> list[dict[str, Any]]:
+        return self.interaction_log.list_interactions(
+            project_id=project_id, limit=limit, offset=offset,
+            tool_name=tool_name, since=since, errors_only=errors_only,
+        )
+
+    def list_unattributed_mcp_sessions(self, *, days: int = 30) -> list[dict[str, Any]]:
+        return self.interaction_log.list_unattributed_sessions(days=days)

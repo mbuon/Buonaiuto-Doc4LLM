@@ -277,3 +277,35 @@ def test_list_unattributed_sessions(store: InteractionLogStore) -> None:
     rows = store.list_unattributed_sessions(days=30)
     assert len(rows) == 1
     assert rows[0]["session_id"] == "u"
+
+
+from buonaiuto_doc4llm.service import DocsHubService
+
+
+def test_docshub_service_initialises_log_tables(tmp_path) -> None:
+    (tmp_path / "docs_center" / "technologies").mkdir(parents=True)
+    (tmp_path / "docs_center" / "projects").mkdir(parents=True)
+    svc = DocsHubService(tmp_path)
+    with sqlite3.connect(svc.db_path) as conn:
+        names = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+    assert "mcp_sessions" in names
+    assert "mcp_interactions" in names
+
+
+def test_docshub_service_delegates_record_and_summary(tmp_path) -> None:
+    (tmp_path / "docs_center" / "technologies").mkdir(parents=True)
+    (tmp_path / "docs_center" / "projects").mkdir(parents=True)
+    svc = DocsHubService(tmp_path)
+    svc.record_mcp_session(
+        session_id="s", project_id="p", workspace_path="/tmp/p",
+        client_name="test", client_version="0.0.1",
+    )
+    svc.record_mcp_interaction(
+        session_id="s", project_id="p", tool_name="search_docs",
+        arguments={"q": "hello"}, result_chars=50, error=None, latency_ms=5,
+    )
+    summary = svc.get_project_interaction_summary("p", days=30)
+    assert summary["total_calls"] == 1
+    assert summary["unique_tools"] == 1

@@ -155,3 +155,27 @@ def test_refresh_active_projects_continues_on_per_project_failure(svc, monkeypat
     pids = {p["project_id"]: p for p in result["projects"]}
     assert pids["bad"]["install_error"] is not None
     assert pids["good"].get("install_error") in (None,)
+
+
+def test_refresh_active_cli_dry_run(tmp_path: Path) -> None:
+    import subprocess
+    import sys as _sys
+
+    (tmp_path / "docs_center" / "technologies").mkdir(parents=True)
+    (tmp_path / "docs_center" / "projects").mkdir(parents=True)
+    svc = DocsHubService(tmp_path)
+    _install_project_file(svc, "x", technologies=["react"])
+    svc.sync_projects()
+    _log_interaction(svc, "x")
+
+    env = dict(**os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    result = subprocess.run(
+        [_sys.executable, "-m", "buonaiuto_doc4llm",
+         "--base-dir", str(tmp_path), "refresh-active", "--dry-run"],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["dry_run"] is True
+    assert any(p["project_id"] == "x" for p in payload["projects"])

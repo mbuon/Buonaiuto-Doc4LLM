@@ -230,6 +230,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--minute", type=int, default=0, help="Minute to run (0-59, default: 0)",
     )
 
+    refresh = subparsers.add_parser(
+        "refresh-active",
+        help="Refresh docs for every project that has called the MCP server recently",
+    )
+    refresh.add_argument("--days", type=int, default=30,
+                         help="Treat projects as active if they have interactions in this window (default: 30)")
+    refresh.add_argument("--dry-run", action="store_true",
+                         help="Show the plan without fetching or re-installing")
+
     dashboard = subparsers.add_parser(
         "dashboard",
         help="Start the web dashboard (FastAPI + HTMX)",
@@ -325,6 +334,13 @@ def main() -> None:
         return
     if args.command == "schedule":
         _run_schedule(args)
+        return
+    if args.command == "refresh-active":
+        from buonaiuto_doc4llm.refresh_active import refresh_active_projects
+        payload = refresh_active_projects(
+            service, days=args.days, dry_run=args.dry_run,
+        )
+        print_json(payload)
         return
     if args.command == "dashboard":
         _run_dashboard(args)

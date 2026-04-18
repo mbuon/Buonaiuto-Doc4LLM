@@ -172,3 +172,23 @@ def test_ensure_project_installed_clears_in_flight_on_success(svc: DocsHubServic
     monkeypatch.setattr(svc, "install_project", lambda **kw: {"project_id": "cleanup"})
     ensure_project_installed(svc, workspace_path=Path("/tmp/cleanup"), wait=True)
     assert "/tmp/cleanup" not in _install_in_flight
+
+
+# ─── Task 8: persist workspace_path in project file ─────────────────────
+
+def test_install_project_persists_workspace_path(tmp_path: Path) -> None:
+    (tmp_path / "docs_center" / "technologies").mkdir(parents=True)
+    (tmp_path / "docs_center" / "projects").mkdir(parents=True)
+    svc = DocsHubService(tmp_path)
+
+    # Minimal fake project folder
+    project_dir = tmp_path / "fake-project"
+    project_dir.mkdir()
+    (project_dir / "package.json").write_text('{"name":"fake","dependencies":{"react":"^18"}}')
+
+    result = svc.install_project(project_root=project_dir, project_id="fake-project")
+    assert result["project_id"] == "fake-project"
+
+    pf = tmp_path / "docs_center" / "projects" / "fake-project.json"
+    data = json.loads(pf.read_text())
+    assert data["workspace_path"] == str(project_dir.resolve())

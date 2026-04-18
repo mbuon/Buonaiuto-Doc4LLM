@@ -178,6 +178,7 @@ def bootstrap_project(
         "project_id": resolved_project_id,
         "name": root.name,
         "technologies": detected,
+        "workspace_path": str(root.resolve()),
     }
     project_file = projects_dir / f"{resolved_project_id}.json"
     project_file.write_text(json.dumps(project_payload, indent=2), encoding="utf-8")

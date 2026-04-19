@@ -2217,11 +2217,14 @@ class DocsHubService:
     def prune_mcp_interactions(self, *, days: int = 30) -> dict[str, int]:
         return self.interaction_log.prune(days=days)
 
-    def get_project_interaction_summary(self, project_id: str | None,
-                                        days: int = 30) -> dict[str, Any]:
+    def get_project_interaction_summary(self, project_id: str | None = None,
+                                        *, days: int = 30) -> dict[str, Any]:
+        # Callers pass project_id=<str> or project_id=None (unattributed).
+        # Use the store's _ALL sentinel when we genuinely want everything
+        # (not currently exercised here, but kept open for dashboards).
         return self.interaction_log.get_summary(project_id, days=days)
 
-    def list_project_interactions(self, project_id: str | None, *,
+    def list_project_interactions(self, project_id: str | None = None, *,
                                   limit: int = 100, offset: int = 0,
                                   tool_name: str | None = None,
                                   since: str | None = None,

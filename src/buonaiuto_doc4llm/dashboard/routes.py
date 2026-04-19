@@ -281,11 +281,19 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/projects/{project_id}/log", response_class=HTMLResponse)
     async def project_log(request: Request, project_id: str) -> HTMLResponse:
         service = request.app.state.service
-        service.prune_mcp_interactions(days=30)
+        # Don't prune on every page load — that's a destructive DELETE and
+        # a crawler could hammer this endpoint. Prune only when the last
+        # prune happened more than an hour ago, using a simple attribute
+        # cache on app.state.
+        import time as _time
+        last = getattr(request.app.state, "_last_prune_at", 0.0)
+        if _time.monotonic() - last > 3600:
+            service.prune_mcp_interactions(days=30)
+            request.app.state._last_prune_at = _time.monotonic()
         is_unattributed = project_id == "unattributed"
         effective_id: str | None = None if is_unattributed else project_id
         summary = service.get_project_interaction_summary(effective_id, days=30)
-        rows = service.list_project_interactions(effective_id, limit=50)
+        rows = service.list_project_interactions(project_id=effective_id, limit=50)
         ctx = _ctx(
             request,
             "projects",
@@ -310,11 +318,14 @@ def register_routes(app: FastAPI) -> None:
         service = request.app.state.service
         is_unattributed = project_id == "unattributed"
         effective_id: str | None = None if is_unattributed else project_id
+        # Clamp since_hours so an attacker-supplied large int can't overflow
+        # timedelta.
+        since_hours = max(1, min(int(since_hours), 24 * 365))
         since_iso = (
             datetime.now(timezone.utc) - timedelta(hours=since_hours)
-        ).isoformat(timespec="seconds")
+        ).isoformat(timespec="microseconds")
         rows = service.list_project_interactions(
-            effective_id,
+            project_id=effective_id,
             limit=50,
             offset=offset,
             tool_name=tool_name or None,

@@ -174,21 +174,38 @@ def _install_launchd(base_dir: Path, hour: int, minute: int) -> dict[str, Any]:
     fetch_plist = _plist_path(LAUNCHD_LABEL_FETCH)
     refresh_plist = _plist_path(LAUNCHD_LABEL_REFRESH)
 
-    # Unload existing plists if present
+    # Unload existing plists if present. Surface stderr so a malformed
+    # plist doesn't silently linger.
     for p in (fetch_plist, refresh_plist):
         if p.exists():
-            subprocess.run(["launchctl", "unload", str(p)], capture_output=True)
+            r = subprocess.run(["launchctl", "unload", str(p)],
+                                capture_output=True, text=True)
+            if r.returncode != 0 and r.stderr.strip():
+                print(f"[scheduler] launchctl unload {p}: {r.stderr.strip()}",
+                      file=sys.stderr)
 
     fetch_plist.write_text(_build_fetch_plist(base_dir, hour, minute), encoding="utf-8")
     refresh_plist.write_text(_build_refresh_plist(base_dir), encoding="utf-8")
+    # Load both, rolling back fetch on refresh failure so we never leave
+    # half a schedule behind.
     subprocess.run(["launchctl", "load", str(fetch_plist)], check=True, capture_output=True)
-    subprocess.run(["launchctl", "load", str(refresh_plist)], check=True, capture_output=True)
+    try:
+        subprocess.run(["launchctl", "load", str(refresh_plist)], check=True, capture_output=True)
+    except subprocess.CalledProcessError:
+        subprocess.run(["launchctl", "unload", str(fetch_plist)], capture_output=True)
+        raise
 
     refresh_minute = (minute + 15) % 60
     refresh_hour = (hour + (1 if (minute + 15) >= 60 else 0)) % 24
     return {
         "installed": True,
         "method": "launchd",
+        # Back-compat summary string for callers that pre-date the two-entry
+        # rewrite (e.g. the dashboard flash message).
+        "schedule": (
+            f"daily at {hour:02d}:{minute:02d} "
+            f"+ refresh every 3 days at {refresh_hour:02d}:{refresh_minute:02d}"
+        ),
         "entries": [
             {"label": LAUNCHD_LABEL_FETCH, "plist": str(fetch_plist),
              "schedule": f"daily at {hour:02d}:{minute:02d}"},
@@ -273,9 +290,16 @@ def _install_crontab(base_dir: Path, hour: int, minute: int) -> dict[str, Any]:
         ["crontab", "-"],
         input=new_crontab, text=True, check=True, capture_output=True,
     )
+    refresh_minute = (minute + 15) % 60
+    refresh_hour = (hour + (1 if (minute + 15) >= 60 else 0)) % 24
     return {
         "installed": True,
         "method": "crontab",
+        # Back-compat summary string for the dashboard flash.
+        "schedule": (
+            f"daily at {hour:02d}:{minute:02d} "
+            f"+ refresh every 3 days at {refresh_hour:02d}:{refresh_minute:02d}"
+        ),
         "entries": lines,
     }
 
@@ -302,6 +326,15 @@ def _crontab_status() -> dict[str, Any]:
 def _read_crontab() -> str:
     result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
     if result.returncode != 0:
+        # `crontab -l` returns 1 both when the user has no crontab ("no
+        # crontab for user") and when the `crontab` binary is missing or
+        # unavailable. Surface real errors so uninstall etc. don't silently
+        # no-op.
+        stderr = (result.stderr or "").strip().lower()
+        benign = ("no crontab" in stderr) or stderr == ""
+        if not benign:
+            print(f"[scheduler] crontab -l failed: {result.stderr.strip()}",
+                  file=sys.stderr)
         return ""
     return result.stdout
 

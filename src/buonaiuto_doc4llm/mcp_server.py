@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
 import traceback
-import uuid
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
 
 from .project_bootstrap import ensure_project_installed, extract_workspace_path
 from .service import DocsHubService
+
+# Largest JSON-RPC input we accept from stdin. A malicious client can otherwise
+# park the server on an unbounded read and exhaust memory.
+MAX_JSONRPC_LINE_BYTES = 16 * 1024 * 1024  # 16 MB
+
+# Per-client-field clamps for data taken from untrusted initialize params.
+MAX_CLIENT_INFO_LEN = 256
 
 
 class MCPServer:
@@ -28,9 +34,21 @@ class MCPServer:
         self.service = DocsHubService(base, retriever=retriever, indexer=indexer)
         self._session_id: str | None = None
         self._session_project_id: str | None = None
+        # Serialises mutations of _session_id / _session_project_id against
+        # concurrent transports (future HTTP streamable MCP).
+        self._session_lock = threading.Lock()
 
     def serve(self) -> None:
         for raw_line in sys.stdin:
+            # Bound individual requests so a malicious client can't exhaust
+            # memory by streaming an unbounded JSON-RPC line.
+            if len(raw_line.encode("utf-8", errors="ignore")) > MAX_JSONRPC_LINE_BYTES:
+                print(
+                    f"[mcp_server] dropping oversized request "
+                    f"({len(raw_line)} bytes)",
+                    file=sys.stderr,
+                )
+                continue
             line = raw_line.strip()
             if not line:
                 continue
@@ -515,6 +533,10 @@ class MCPServer:
 
     def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
+        # Snapshot session identity at the start so a concurrent initialize
+        # can't swap it mid-call and misattribute the log row.
+        session_id = self._session_id
+        session_project_id = self._session_project_id
         error_msg: str | None = None
         result_chars: int | None = None
         try:
@@ -525,15 +547,22 @@ class MCPServer:
                 result_chars = None
             return result
         except Exception as exc:
-            error_msg = f"{type(exc).__name__}: {exc}"
+            # Keep the traceback tail so the persisted row is debuggable
+            # without exposing internal paths.
+            tb = traceback.format_exc().splitlines()
+            tail = "\n".join(tb[-6:]) if len(tb) > 6 else "\n".join(tb)
+            error_msg = f"{type(exc).__name__}: {exc}\n{tail}"
             raise
         finally:
-            if self._session_id is None:
-                # Tool called before initialize — generate a one-shot session
-                self._session_id = str(uuid.uuid4())
+            if session_id is None:
+                # Tool called before initialize — generate a one-shot session.
+                session_id = self.service.interaction_log.new_session_id()
+                with self._session_lock:
+                    if self._session_id is None:
+                        self._session_id = session_id
                 try:
                     self.service.record_mcp_session(
-                        session_id=self._session_id,
+                        session_id=session_id,
                         project_id=None, workspace_path=None,
                         client_name=None, client_version=None,
                     )
@@ -542,13 +571,13 @@ class MCPServer:
                           file=sys.stderr)
             try:
                 self.service.record_mcp_interaction(
-                    session_id=self._session_id,
-                    project_id=self._session_project_id,
+                    session_id=session_id,
+                    project_id=session_project_id,
                     tool_name=name,
                     arguments=arguments,
                     result_chars=result_chars,
                     error=error_msg,
-                    latency_ms=int((time.monotonic() - started) * 1000),
+                    latency_ms=max(0, int((time.monotonic() - started) * 1000)),
                 )
             except Exception as exc:
                 print(f"[mcp_server] record_mcp_interaction failed: {exc}",
@@ -697,8 +726,22 @@ class MCPServer:
     def _bootstrap_from_initialize_params(self, params: dict[str, Any]) -> dict[str, Any] | None:
         workspace_path = extract_workspace_path(params)
         client_info = params.get("clientInfo") or {}
+        if not isinstance(client_info, dict):
+            client_info = {}
+        client_name = client_info.get("name")
+        client_version = client_info.get("version")
+        # Clamp before persistence so a malicious client can't flood the DB.
+        if isinstance(client_name, str) and len(client_name) > MAX_CLIENT_INFO_LEN:
+            client_name = client_name[:MAX_CLIENT_INFO_LEN]
+        if isinstance(client_version, str) and len(client_version) > MAX_CLIENT_INFO_LEN:
+            client_version = client_version[:MAX_CLIENT_INFO_LEN]
+        if not isinstance(client_name, str):
+            client_name = None
+        if not isinstance(client_version, str):
+            client_version = None
 
-        self._session_id = str(uuid.uuid4())
+        # Allocate a fresh session id under the store's lock.
+        new_sid = self.service.interaction_log.new_session_id()
 
         # Caller explicitly passed a project path/id → synchronous install,
         # return the full bootstrap summary. This is the classic opt-in path
@@ -707,62 +750,43 @@ class MCPServer:
         explicit = params.get("project_path") or params.get("projectPath")
         explicit_id = params.get("project_id") or params.get("projectId")
         bootstrap_summary: dict[str, Any] | None = None
+        session_project_id: str | None = None
         if isinstance(explicit, str) and explicit.strip():
             try:
                 bootstrap_summary = self.service.install_project(
                     project_root=Path(explicit.strip()),
                     project_id=explicit_id if isinstance(explicit_id, str) else None,
                 )
-                self._session_project_id = bootstrap_summary.get("project_id")
+                if isinstance(bootstrap_summary, dict):
+                    session_project_id = bootstrap_summary.get("project_id")
             except Exception as exc:
                 print(f"[mcp_server] explicit install_project failed: {exc}",
                       file=sys.stderr)
-                self._session_project_id = None
+                session_project_id = None
         else:
             # Workspace-URI path: resolve + auto-install in the background
-            # so the MCP handshake never blocks.
-            self._session_project_id = ensure_project_installed(
+            # so the MCP handshake never blocks. Pass the session_id so
+            # the background thread can backfill attribution once the real
+            # project_id is known.
+            session_project_id = ensure_project_installed(
                 self.service, workspace_path=workspace_path, wait=False,
+                session_id=new_sid,
             )
 
+        # Commit the session row before handing control to the client so
+        # any concurrent tool call has a row to upsert against.
+        with self._session_lock:
+            self._session_id = new_sid
+            self._session_project_id = session_project_id
         try:
             self.service.record_mcp_session(
-                session_id=self._session_id,
-                project_id=self._session_project_id,
+                session_id=new_sid,
+                project_id=session_project_id,
                 workspace_path=str(workspace_path) if workspace_path else None,
-                client_name=client_info.get("name") if isinstance(client_info, dict) else None,
-                client_version=client_info.get("version") if isinstance(client_info, dict) else None,
+                client_name=client_name,
+                client_version=client_version,
             )
         except Exception as exc:
             print(f"[mcp_server] record_mcp_session failed: {exc}", file=sys.stderr)
         return bootstrap_summary
 
-    @staticmethod
-    def _resolve_project_path(params: dict[str, Any]) -> Path | None:
-        direct = params.get("project_path") or params.get("projectPath")
-        if isinstance(direct, str) and direct.strip():
-            return Path(direct.strip())
-
-        folders = params.get("workspaceFolders")
-        if isinstance(folders, list):
-            for folder in folders:
-                if not isinstance(folder, dict):
-                    continue
-                uri = folder.get("uri")
-                if isinstance(uri, str):
-                    path = MCPServer._path_from_uri(uri)
-                    if path is not None:
-                        return path
-
-        root_uri = params.get("rootUri")
-        if isinstance(root_uri, str):
-            return MCPServer._path_from_uri(root_uri)
-
-        return None
-
-    @staticmethod
-    def _path_from_uri(uri: str) -> Path | None:
-        parsed = urlparse(uri)
-        if parsed.scheme != "file":
-            return None
-        return Path(unquote(parsed.path))

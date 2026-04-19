@@ -309,3 +309,99 @@ def test_docshub_service_delegates_record_and_summary(tmp_path) -> None:
     summary = svc.get_project_interaction_summary("p", days=30)
     assert summary["total_calls"] == 1
     assert summary["unique_tools"] == 1
+
+
+# ─── Hardening tests: bug-hunt fixes ──────────────────────────────────
+
+def test_record_session_backfills_missing_client_info_via_coalesce(store: InteractionLogStore) -> None:
+    # Stub session created by an interaction with NULL client fields
+    store.record_interaction(
+        session_id="sx", project_id=None, tool_name="t",
+        arguments={}, result_chars=0, error=None, latency_ms=1,
+    )
+    # Later, the real initialize arrives with full metadata
+    store.record_session(
+        session_id="sx", project_id="pp", workspace_path="/tmp/pp",
+        client_name="claude-code", client_version="0.5",
+    )
+    rows = [s for s in store.list_sessions() if s["session_id"] == "sx"]
+    assert rows[0]["client_name"] == "claude-code"
+    assert rows[0]["client_version"] == "0.5"
+    assert rows[0]["workspace_path"] == "/tmp/pp"
+    assert rows[0]["project_id"] == "pp"
+
+
+def test_backfill_session_project_updates_sessions_and_interactions(store: InteractionLogStore) -> None:
+    store.record_session(
+        session_id="sy", project_id=None, workspace_path=None,
+        client_name=None, client_version=None,
+    )
+    store.record_interaction(
+        session_id="sy", project_id=None, tool_name="t",
+        arguments={}, result_chars=0, error=None, latency_ms=1,
+    )
+    store.backfill_session_project("sy", "myapp")
+    sessions = [s for s in store.list_sessions() if s["session_id"] == "sy"]
+    assert sessions[0]["project_id"] == "myapp"
+    rows = store.list_interactions(project_id="myapp")
+    assert len(rows) == 1
+
+
+def test_prune_uses_last_seen_at_not_started_at(store: InteractionLogStore) -> None:
+    """A session started 45d ago but active yesterday must be retained."""
+    with store._connect() as conn:
+        # Session started 45d ago but with fresh last_seen_at
+        old = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat(timespec="microseconds")
+        recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="microseconds")
+        conn.execute(
+            "INSERT INTO mcp_sessions "
+            "(session_id, project_id, workspace_path, client_name, client_version,"
+            " started_at, last_seen_at) "
+            "VALUES (?, ?, NULL, NULL, NULL, ?, ?)",
+            ("live", "p", old, recent),
+        )
+    store.prune(days=30)
+    # Live session must survive
+    assert any(s["session_id"] == "live" for s in store.list_sessions())
+
+
+def test_list_sessions_all_vs_none_vs_filtered(store: InteractionLogStore) -> None:
+    store.record_session(session_id="a", project_id="p1", workspace_path=None,
+                         client_name=None, client_version=None)
+    store.record_session(session_id="b", project_id=None, workspace_path=None,
+                         client_name=None, client_version=None)
+    # Default (no arg) returns both
+    all_sessions = store.list_sessions()
+    assert {s["session_id"] for s in all_sessions} == {"a", "b"}
+    # Explicit None returns only unattributed
+    unattr = store.list_sessions(project_id=None)
+    assert {s["session_id"] for s in unattr} == {"b"}
+    # Named filter
+    named = store.list_sessions(project_id="p1")
+    assert {s["session_id"] for s in named} == {"a"}
+
+
+def test_sanitize_arguments_bounds_recursion_depth() -> None:
+    # Build a deeply nested structure well past MAX_SANITIZE_DEPTH
+    from buonaiuto_doc4llm.interaction_log import MAX_SANITIZE_DEPTH
+    nested: Any = "leaf"
+    for _ in range(MAX_SANITIZE_DEPTH + 10):
+        nested = {"deeper": nested}
+    # Should not raise RecursionError
+    result = sanitize_arguments(nested)
+    # The sentinel appears somewhere in the tree.
+    import json as _json
+    serialized = _json.dumps(result)
+    assert "max-depth" in serialized
+
+
+def test_sanitize_arguments_tuple_normalized_to_list() -> None:
+    out = sanitize_arguments({"t": (1, 2, 3)})
+    assert out == {"t": [1, 2, 3]}
+
+
+def test_sanitize_arguments_handles_bytes() -> None:
+    out = sanitize_arguments({"b": b"hello"})
+    assert out == {"b": "hello"}
+    out_big = sanitize_arguments({"b": b"x" * 10_000})
+    assert out_big["b"].startswith("<truncated>")

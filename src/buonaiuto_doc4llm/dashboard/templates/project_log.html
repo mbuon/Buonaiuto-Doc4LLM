@@ -29,7 +29,9 @@
   <div class="card">
     <div class="card-header"><span class="card-title">Calls per day</span></div>
     <div class="card-body">
-      {% set max_count = (summary.calls_per_day | map(attribute='count') | list | max) or 1 %}
+      {% set _counts = summary.calls_per_day | map(attribute='count') | list %}
+      {% set max_count = (_counts | max) if _counts else 1 %}
+      {% set max_count = max_count if max_count else 1 %}
       <svg width="100%" height="120" viewBox="0 0 320 120" preserveAspectRatio="none">
         {% for d in summary.calls_per_day %}
           {% set bar_h = (d.count / max_count * 110) if max_count else 0 %}

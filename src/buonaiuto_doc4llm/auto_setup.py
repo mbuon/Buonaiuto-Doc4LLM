@@ -174,14 +174,21 @@ def bootstrap_project(
     projects_dir.mkdir(parents=True, exist_ok=True)
     tech_dir.mkdir(parents=True, exist_ok=True)
 
+    try:
+        resolved_workspace = str(root.resolve(strict=False))
+    except (OSError, RuntimeError):
+        resolved_workspace = str(root)
     project_payload = {
         "project_id": resolved_project_id,
         "name": root.name,
         "technologies": detected,
-        "workspace_path": str(root.resolve()),
+        "workspace_path": resolved_workspace,
     }
     project_file = projects_dir / f"{resolved_project_id}.json"
-    project_file.write_text(json.dumps(project_payload, indent=2), encoding="utf-8")
+    # Write atomically so a concurrent reader never sees a partial file.
+    tmp_path = projects_dir / f"{resolved_project_id}.json.tmp"
+    tmp_path.write_text(json.dumps(project_payload, indent=2), encoding="utf-8")
+    tmp_path.replace(project_file)
 
     source_root = Path(seed_technologies_root) if seed_technologies_root is not None else _default_seed_root()
     copied: list[str] = []

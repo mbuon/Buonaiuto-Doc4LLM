@@ -7,7 +7,7 @@
   <td style="text-align: right;">{{ (row.result_chars or 0) | filesizeformat }}</td>
   <td>
     {% if row.error %}
-      <span class="badge badge-red" title="{{ row.error }}">error</span>
+      <span class="badge badge-red" title="{{ row.error | truncate_chars(300) }}">error</span>
     {% else %}
       <span class="badge badge-green">ok</span>
     {% endif %}

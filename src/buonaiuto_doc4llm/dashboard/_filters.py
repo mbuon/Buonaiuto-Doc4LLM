@@ -1,45 +1,60 @@
 from __future__ import annotations
 
 import json as _json
+import sys
 from datetime import datetime, timezone
 from typing import Any
 
 
 def mcp_args_summary(tool_name: str, args: dict[str, Any] | Any) -> str:
     if not isinstance(args, dict):
-        return str(args)
+        return str(args) if args else "—"
 
     if tool_name in ("search_docs", "search_documentation"):
         tech = args.get("technology") or args.get("libraries") or ""
         if isinstance(tech, list):
             tech = ", ".join(str(t) for t in tech)
         q = args.get("query", "")
-        return f'{tech}, "{q}"'
+        if not tech and not q:
+            return "—"
+        return f'{tech}, "{q}"' if q else str(tech)
     if tool_name in ("read_doc", "read_full_page"):
-        return f'{args.get("technology", "")}/{args.get("rel_path", "")}'
+        tech = args.get("technology", "")
+        rel = args.get("rel_path", "")
+        if not tech and not rel:
+            return "—"
+        return f"{tech}/{rel}"
     if tool_name in ("list_project_updates", "ack_project_updates"):
-        return str(args.get("project_id", ""))
+        return str(args.get("project_id") or "—")
     if tool_name == "fetch_docs":
         return args.get("technology") or "all"
     if tool_name == "install_project":
-        return str(args.get("project_path", ""))
+        return str(args.get("project_path") or "—")
 
-    items = list(args.items())[:2]
+    # Filter out None values and sort for deterministic display.
+    items = [(k, v) for k, v in sorted(args.items()) if v is not None][:2]
     return ", ".join(f"{k}={v}" for k, v in items) or "—"
 
 
 def humanize_timedelta(moment: datetime | str | None) -> str:
     if moment is None:
         return "never"
+    original = moment
     if isinstance(moment, str):
         try:
             moment = datetime.fromisoformat(moment)
         except ValueError:
-            return moment
+            print(f"[dashboard] humanize_timedelta: could not parse {original!r}",
+                  file=sys.stderr)
+            return "unknown"
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
     delta = datetime.now(timezone.utc) - moment
     seconds = int(delta.total_seconds())
+    if seconds < 0:
+        # Clock skew — stamp from the future. Show "just now" rather than
+        # a confusing negative interval.
+        return "just now"
     if seconds < 60:
         return "just now"
     if seconds < 3600:
@@ -53,7 +68,7 @@ def truncate_chars(value: str, limit: int) -> str:
     if value is None:
         return ""
     s = str(value)
-    return s if len(s) <= limit else s[:limit] + "…"
+    return s if len(s) <= limit else s[:limit] + "..."
 
 
 def fromjson(value: str | None) -> Any:
@@ -61,5 +76,7 @@ def fromjson(value: str | None) -> Any:
         return {}
     try:
         return _json.loads(value)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
+        print(f"[dashboard] fromjson: could not parse column value: {exc}",
+              file=sys.stderr)
         return {}

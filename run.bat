@@ -2,12 +2,12 @@
 REM Launcher for Buonaiuto Doc4LLM (Windows)
 REM Prompts for which mode to start, then runs it.
 
-setlocal
+setlocal enabledelayedexpansion
 
 set "BASE_DIR=%~dp0"
-if "%BASE_DIR:~-1%"=="\" set "BASE_DIR=%BASE_DIR:~0,-1%"
+if "!BASE_DIR:~-1!"=="\" set "BASE_DIR=!BASE_DIR:~0,-1!"
 
-if "%PYTHON_BIN%"=="" (
+if "!PYTHON_BIN!"=="" (
     where python >nul 2>nul
     if errorlevel 1 (
         where py >nul 2>nul
@@ -22,7 +22,7 @@ if "%PYTHON_BIN%"=="" (
     )
 )
 
-set "PYTHONPATH=%BASE_DIR%\src;%PYTHONPATH%"
+set "PYTHONPATH=!BASE_DIR!\src;!PYTHONPATH!"
 
 echo Buonaiuto Doc4LLM -- choose a mode:
 echo.
@@ -34,16 +34,16 @@ echo.
 
 set /p choice="Enter choice [1-4]: "
 
-if "%choice%"=="1" (
-    "%PYTHON_BIN%" -m buonaiuto_doc4llm --base-dir "%BASE_DIR%" serve
-) else if "%choice%"=="2" (
-    "%PYTHON_BIN%" -m buonaiuto_doc4llm --base-dir "%BASE_DIR%" serve --dashboard
-) else if "%choice%"=="3" (
-    "%PYTHON_BIN%" -m buonaiuto_doc4llm --base-dir "%BASE_DIR%" dashboard
-) else if "%choice%"=="4" (
-    "%PYTHON_BIN%" -m buonaiuto_doc4llm --base-dir "%BASE_DIR%" watch
+if "!choice!"=="1" (
+    "!PYTHON_BIN!" -m buonaiuto_doc4llm --base-dir "!BASE_DIR!" serve
+) else if "!choice!"=="2" (
+    "!PYTHON_BIN!" -m buonaiuto_doc4llm --base-dir "!BASE_DIR!" serve --dashboard
+) else if "!choice!"=="3" (
+    "!PYTHON_BIN!" -m buonaiuto_doc4llm --base-dir "!BASE_DIR!" dashboard
+) else if "!choice!"=="4" (
+    "!PYTHON_BIN!" -m buonaiuto_doc4llm --base-dir "!BASE_DIR!" watch
 ) else (
-    echo Invalid choice: %choice%
+    echo Invalid choice: !choice!
     exit /b 1
 )
 

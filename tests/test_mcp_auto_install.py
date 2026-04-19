@@ -311,3 +311,78 @@ def test_end_to_end_first_connect_installs_and_logs(tmp_path, monkeypatch) -> No
     rows = server.service.list_project_interactions("my-new-project")
     assert len(rows) == 1
     assert rows[0]["tool_name"] == "list_supported_libraries"
+
+
+# ─── Hardening tests: bug-hunt fixes ──────────────────────────────────
+
+def test_ensure_project_installed_rejects_traversal_basenames(svc: DocsHubService, monkeypatch) -> None:
+    called = []
+    monkeypatch.setattr(svc, "install_project",
+                        lambda **kw: called.append(kw))
+    # Path whose .name would be '..' (this is actually .name='' on Unix).
+    # Simulate a traversal-like basename directly.
+    class FakePath:
+        name = ".."
+    # Can't directly feed a fake Path; instead call _normalise_basename.
+    from buonaiuto_doc4llm.project_bootstrap import _normalise_basename
+    assert _normalise_basename("..") is None
+    assert _normalise_basename("../etc/passwd") is None
+    assert _normalise_basename("bad\x00name") is None
+    assert _normalise_basename("") is None
+    assert _normalise_basename("good-name") == "good-name"
+    assert _normalise_basename("With Spaces!") == "With-Spaces"
+
+
+def test_resolve_project_id_flags_ambiguous_matches(tmp_path: Path, capsys, monkeypatch) -> None:
+    """When two *.json files share a stem case-insensitively, refuse to guess.
+
+    Simulated via monkeypatch because APFS/NTFS are case-insensitive and
+    collapse the files, making a real setup platform-dependent.
+    """
+    from buonaiuto_doc4llm import project_bootstrap as pb
+
+    class _FakePath:
+        def __init__(self, stem: str):
+            self.name = f"{stem}.json"
+            self.stem = stem
+        def read_text(self, encoding: str = "utf-8") -> str:
+            return '{"project_id":"x","technologies":[]}'
+        def __lt__(self, other: "_FakePath") -> bool:
+            return self.name < other.name
+
+    projects_root = tmp_path / "docs_center" / "projects"
+    projects_root.mkdir(parents=True)
+    monkeypatch.setattr(
+        type(projects_root),
+        "glob",
+        lambda self, pat: [_FakePath("Foo"), _FakePath("foo")],
+    )
+    assert pb.resolve_project_id_for_basename(projects_root, "foo") is None
+    assert "ambiguous" in capsys.readouterr().err
+
+
+def test_ensure_project_installed_dedup_key_uses_resolved_path(svc: DocsHubService, monkeypatch, tmp_path) -> None:
+    """Sequential calls with path spellings that resolve equal should
+    dedup — second call sees the in-flight entry and returns without
+    dispatching a second install."""
+    proj = tmp_path / "myproj"
+    proj.mkdir()
+    calls = []
+    gate = threading.Event()
+
+    def slow_install(**kw):
+        calls.append(kw)
+        gate.wait(timeout=5)
+
+    monkeypatch.setattr(svc, "install_project", slow_install)
+    p1 = Path(str(proj))
+    p2 = Path(str(proj) + "/")  # trailing slash, same resolved path
+
+    # First call runs in the background (gate holds it there).
+    ensure_project_installed(svc, workspace_path=p1, wait=False)
+    # Second call while the first is in-flight: same dedup key.
+    ensure_project_installed(svc, workspace_path=p2, wait=False)
+    gate.set()
+    # Wait for the background thread to finish.
+    time.sleep(0.3)
+    assert len(calls) == 1, f"expected 1 install, got {len(calls)}"

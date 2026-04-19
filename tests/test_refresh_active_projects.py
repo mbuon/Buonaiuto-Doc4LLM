@@ -121,13 +121,17 @@ def test_refresh_active_projects_skips_reinstall_when_workspace_path_missing(svc
     svc.sync_projects()
     _log_interaction(svc, "legacy")
 
+    # Use a flag (not pytest.fail) so the assertion survives the except
+    # Exception handler inside refresh_active_projects.
+    calls: list[dict] = []
     monkeypatch.setattr(svc, "install_project",
-                        lambda **kw: pytest.fail("install should not run"))
+                        lambda **kw: calls.append(kw))
     monkeypatch.setattr(
         "buonaiuto_doc4llm.refresh_active._fetch_technology",
         lambda svc, tech: {"technology": tech, "status": "ok"},
     )
     result = refresh_active_projects(svc, days=30, dry_run=False)
+    assert calls == [], f"install_project must not run but was called with: {calls}"
     assert "legacy" in {p["project_id"] for p in result["projects"]}
 
 

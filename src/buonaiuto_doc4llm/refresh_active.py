@@ -7,10 +7,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from buonaiuto_doc4llm.project_bootstrap import FRESHNESS_SECONDS
+
 if TYPE_CHECKING:
     from buonaiuto_doc4llm.service import DocsHubService
-
-FRESHNESS_SECONDS = 24 * 60 * 60
 
 
 def list_active_projects(service: "DocsHubService", *, days: int = 30) -> list[dict[str, Any]]:
@@ -57,6 +57,12 @@ def _fetch_technology(service: "DocsHubService", technology: str) -> dict[str, A
 def refresh_active_projects(
     service: "DocsHubService", *, days: int = 30, dry_run: bool = False,
 ) -> dict[str, Any]:
+    # Make sure newly-created project JSON files are synced into the DB
+    # before we query which projects are active.
+    try:
+        service.sync_projects()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[refresh_active] sync_projects failed: {exc}", file=sys.stderr)
     projects = list_active_projects(service, days=days)
     techs_union: set[str] = set()
     per_project: list[dict[str, Any]] = []
@@ -88,15 +94,21 @@ def refresh_active_projects(
         per_project.append(entry)
 
     fetches: list[dict[str, Any]] = []
+    fetched_any = False
     if not dry_run:
         for tech in sorted(techs_union):
             try:
-                fetches.append(_fetch_technology(service, tech))
+                result = _fetch_technology(service, tech)
+                fetches.append(result)
+                fetched_any = True
             except Exception as exc:  # noqa: BLE001
                 fetches.append({"technology": tech, "status": "error",
                                 "error": f"{type(exc).__name__}: {exc}"})
                 print(f"[refresh_active] fetch({tech}) failed: {exc}", file=sys.stderr)
-        service.scan()
+        # Only scan when at least one fetch ran successfully; otherwise the
+        # scan is just extra I/O that won't surface any new content.
+        if fetched_any:
+            service.scan()
 
     return {
         "dry_run": dry_run,

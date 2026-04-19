@@ -47,7 +47,9 @@ def test_humanize_timedelta() -> None:
 
 def test_truncate_chars() -> None:
     assert truncate_chars("hello", 10) == "hello"
-    assert truncate_chars("hello world", 5) == "hello…"
+    # Use ASCII "..." (not Unicode U+2026) so Windows cp1252 terminals
+    # don't mojibake the output.
+    assert truncate_chars("hello world", 5) == "hello..."
 
 
 def test_fromjson_handles_none_and_invalid() -> None:

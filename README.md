@@ -199,6 +199,132 @@ This works for internal documentation, private libraries, API specs, architectur
 
 ---
 
+## Example prompts
+
+Paste any of these into Claude Desktop, Claude Code, Cursor, or any MCP-connected AI tool. Each one exercises a different tool or combination.
+
+---
+
+### 1. What libraries do I have indexed?
+
+> Using buonaiuto-doc4llm, call `list_supported_libraries` and show me every library with its version and document count.
+
+---
+
+### 2. Search Supabase for Row Level Security
+
+> Using buonaiuto-doc4llm, search the supabase documentation for "row level security". Show the top results with file paths, then read the most relevant document.
+
+---
+
+### 3. Look up a TypeScript feature
+
+> Using buonaiuto-doc4llm, search the typescript documentation for "satisfies operator". Read the most relevant result and show the current syntax with an example.
+
+---
+
+### 4. Find the latest Stripe webhook setup
+
+> Using buonaiuto-doc4llm, search stripe for "webhook endpoint setup". Read the top result and show me the exact steps including the signature verification code.
+
+---
+
+### 5. React 19 new hooks
+
+> Using buonaiuto-doc4llm, search the react documentation for "useActionState". Read the result and explain the new hook with a code example.
+
+---
+
+### 6. Next.js App Router data fetching
+
+> Using buonaiuto-doc4llm, search nextjs for "server actions form". Show me the current recommended pattern for mutating data with Server Actions.
+
+---
+
+### 7. FastAPI dependency injection
+
+> Using buonaiuto-doc4llm, search fastapi for "dependency injection". Read the top result and show me how to define a reusable dependency with `Depends`.
+
+---
+
+### 8. Tailwind CSS responsive grid
+
+> Using buonaiuto-doc4llm, search tailwindcss for "grid responsive columns". Show me the utility classes for a 3-column layout that collapses to 1 column on mobile.
+
+---
+
+### 9. Pydantic v2 model validation
+
+> Using buonaiuto-doc4llm, search pydantic for "field validator". Read the result and show me how to write a custom field validator in Pydantic v2 syntax.
+
+---
+
+### 10. OpenAI structured outputs
+
+> Using buonaiuto-doc4llm, search openai for "structured outputs json schema". Read the most relevant document and show me the API call with `response_format`.
+
+---
+
+### 11. Anthropic tool use
+
+> Using buonaiuto-doc4llm, search anthropic for "tool use". Read the result and show me the minimal Python code to call Claude with a custom tool.
+
+---
+
+### 12. Cross-library search — authentication patterns
+
+> Using buonaiuto-doc4llm, call `search_documentation` with query "JWT authentication" across supabase, nextjs, and fastapi. Summarise the approach each library recommends.
+
+---
+
+### 13. Auto-detect and bootstrap a project
+
+> Using buonaiuto-doc4llm, call `install_project` with the path to my project at `/path/to/my-app`. Tell me which technologies were detected and which docs were fetched.
+
+---
+
+### 14. Check for documentation updates
+
+> Using buonaiuto-doc4llm, call `list_project_updates` for project "my-app". Show me every file that changed since my last check, grouped by technology.
+
+---
+
+### 15. What changed in the last 7 days?
+
+> Using buonaiuto-doc4llm, call `diff_since` with a timestamp from 7 days ago. Show me every added, updated, or deleted documentation file.
+
+---
+
+### 16. Fetch the latest docs for a library
+
+> Using buonaiuto-doc4llm, call `fetch_docs` for supabase. Tell me how many files were added or updated compared to the previous version.
+
+---
+
+### 17. Browse all Python stdlib documents
+
+> Using buonaiuto-doc4llm, call `list_docs` for the python technology. Show me all indexed files and flag any that look like they cover async I/O.
+
+---
+
+### 18. Read a specific document by path
+
+> Using buonaiuto-doc4llm, call `read_doc` for technology "nextjs" and path "app/building-your-application/routing/index.md". Show me the table of contents and then read only the "Dynamic Routes" section.
+
+---
+
+### 19. Discover docs for an unknown package
+
+> Using buonaiuto-doc4llm, call `resolve_observed_packages` with limit 20. Show me which previously unknown packages now have documentation indexed.
+
+---
+
+### 20. Check documentation quality stats
+
+> Using buonaiuto-doc4llm, call `feedback_stats`. Show me the overall satisfaction rate and the 3 lowest-rated documents so I know which ones to refresh.
+
+---
+
 ## Installation
 
 ### Requirements

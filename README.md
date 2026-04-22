@@ -199,6 +199,36 @@ This works for internal documentation, private libraries, API specs, architectur
 
 ---
 
+## Knowledge validation against local docs
+
+Before writing code that uses any library, connect your project to `buonaiuto-doc4llm` and follow these steps to verify the current API instead of relying on training data:
+
+1. Before writing code that uses any library, call `list_supported_libraries` to check which version is locally indexed — do not assume training data is current.
+2. Before using any specific function or API, call `search_docs` (single library) or `search_documentation` (cross-library) to find the relevant document.
+3. Always read the source with `read_doc` before implementing — pass `query=` to rank sections, `section=` to jump directly to a heading.
+4. At the start of every session, call `diff_since` to check if any subscribed documentation changed since the last check.
+5. After every doc read, call `submit_feedback` with `satisfied=` and `reason=` — both fields are mandatory.
+
+**Example — validating the Supabase RLS API before implementing a policy:**
+
+> Using buonaiuto-doc4llm:
+> 1. Call `list_supported_libraries` — confirm supabase version indexed
+> 2. Call `search_docs` with technology=`supabase`, query=`row level security enable`
+> 3. Call `read_doc` on the top result with query=`row level security enable`
+> 4. Implement based on what the doc says, not on training memory
+> 5. Call `submit_feedback` with satisfied=true and reason=`RLS syntax confirmed current`
+
+**Example — validating a Next.js Server Action before using it:**
+
+> Using buonaiuto-doc4llm:
+> 1. Call `list_supported_libraries` — confirm nextjs version indexed
+> 2. Call `search_docs` with technology=`nextjs`, query=`server actions form mutation`
+> 3. Call `read_doc` on the top result with section=`Server Actions`
+> 4. Implement the form using the current `"use server"` directive syntax from the doc
+> 5. Call `submit_feedback` with satisfied=true and reason=`Server Actions pattern confirmed`
+
+---
+
 ## Example prompts
 
 Paste any of these into Claude Desktop, Claude Code, Cursor, or any MCP-connected AI tool. Each one exercises a different tool or combination.

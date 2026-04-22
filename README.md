@@ -790,7 +790,7 @@ If your MCP client sends workspace context in the `initialize` call (Claude Code
 
 On every MCP `initialize`:
 
-1. The server reads the workspace path from `rootUri` / `workspaceFolders[0].uri`.
+1. The server reads the workspace path from `roots[0].uri` (Claude Code / MCP 2025-03-26), `workspaceFolders[0].uri` (Cursor, Windsurf), or `rootUri` — whichever is present.
 2. It looks for `docs_center/projects/<basename>.json`.
 3. **If the file does not exist** → it auto-runs `install_project` for that path (on a background thread, so the MCP handshake returns instantly). First time you connect from a new folder, you get a subscription file with no manual step.
 4. **If the file exists and its `mtime` is less than 24 hours old** → it's reused as-is. No fetching.

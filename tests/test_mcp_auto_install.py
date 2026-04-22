@@ -30,6 +30,14 @@ def test_extract_workspace_path_from_workspace_folders() -> None:
     assert p == Path("/tmp/first")
 
 
+def test_extract_workspace_path_from_roots() -> None:
+    # Claude Code sends `roots` (MCP 2025-03-26 spec)
+    p = extract_workspace_path({
+        "roots": [{"uri": "file:///home/user/ordina28", "name": "ordina28"}],
+    })
+    assert p == Path("/home/user/ordina28")
+
+
 def test_extract_workspace_path_none_when_missing() -> None:
     assert extract_workspace_path({}) is None
     assert extract_workspace_path({"rootUri": "http://not-a-file"}) is None

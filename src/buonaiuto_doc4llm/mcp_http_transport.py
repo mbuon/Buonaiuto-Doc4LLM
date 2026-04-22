@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import sys
 import threading
@@ -7,6 +5,13 @@ import uuid as _uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+
+try:
+    from fastapi import FastAPI, Request as _Request
+    from fastapi.responses import JSONResponse
+    _FASTAPI_AVAILABLE = True
+except ImportError:
+    _FASTAPI_AVAILABLE = False
 
 if TYPE_CHECKING:
     from buonaiuto_doc4llm.mcp_server import MCPServer
@@ -46,27 +51,18 @@ class SessionRegistry:
 def create_mcp_http_app(server: "MCPServer"):  # -> FastAPI
     """Build and return a FastAPI application exposing the MCP server over HTTP.
 
-    The lazy import of fastapi keeps the module importable in environments that
-    do not have fastapi installed (e.g. when only the stdio MCP transport is used).
+    FastAPI is imported at module level (with a try/except so the module stays
+    importable without FastAPI).  All annotations in this file are runtime-valid
+    Python 3.10+ — no PEP 563 deferred evaluation needed.
     """
-    from fastapi import FastAPI
-    from fastapi.requests import Request  # noqa: F401 — imported for annotation below
-    from fastapi.responses import JSONResponse
+    if not _FASTAPI_AVAILABLE:
+        raise ImportError(
+            "fastapi is required for the HTTP transport. "
+            "Install it with: pip install fastapi[all]"
+        )
 
     app = FastAPI(title="Buonaiuto Doc4LLM MCP", docs_url=None, redoc_url=None)
     registry = SessionRegistry()
-
-    # We define the routes inside a helper so that the local `Request` import is
-    # in the global scope of *this* function — FastAPI resolves annotations from
-    # the function's __globals__, which for nested `def` is the enclosing module's
-    # globals.  Using get_annotations(eval_str=True) with the local import would
-    # fail.  Instead we patch the app's route resolver by declaring the handlers
-    # at module scope via exec so they inherit the correct globals, OR we simply
-    # avoid PEP 563 deferred evaluation for these route functions by annotating
-    # with the actual type object rather than a string.
-    #
-    # The cleanest approach: wrap the route body in a closure that receives
-    # the `Request` type explicitly, bypassing annotation-string resolution.
 
     async def _get_info():
         return JSONResponse(content={
@@ -75,15 +71,9 @@ def create_mcp_http_app(server: "MCPServer"):  # -> FastAPI
             "protocolVersion": "2025-03-26",
         })
 
-    # Attach without type annotation so FastAPI does not try to resolve it.
     app.get("/mcp")(_get_info)
 
-    # For the POST handler we need FastAPI to inject the Request object.
-    # We achieve this by setting the annotation dict directly on the function
-    # object AFTER definition so PEP 563 string conversion is bypassed.
-    from fastapi import Request as _Request  # noqa: F811
-
-    async def _post_mcp(request):  # annotation added below
+    async def _post_mcp(request: _Request):
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > MAX_HTTP_BODY_BYTES:
             return JSONResponse(
@@ -112,11 +102,18 @@ def create_mcp_http_app(server: "MCPServer"):  # -> FastAPI
 
         if method == "initialize":
             new_sid = str(_uuid.uuid4())
-            params = rpc.get("params") or {}
-            server._bootstrap_from_initialize_params(params)
-            project_id = server._session_project_id
+            # Let handle_request run _bootstrap_from_initialize_params exactly
+            # once.  Pass a temporary state so _call_tool uses the HTTP session
+            # id if any tool is called during initialize (not expected, but safe).
+            temp_state = SessionState(session_id=new_sid, project_id=None)
+            result = server.handle_request(rpc, session_state=temp_state)
+            # Extract project_id from the bootstrap summary returned in the result.
+            bootstrap = (result.get("result") or {}).get("bootstrap") or {}
+            project_id = bootstrap.get("project_id")
             state = registry.allocate(session_id=new_sid, project_id=project_id)
+            # Record the HTTP session row under the HTTP session id.
             try:
+                params = rpc.get("params") or {}
                 client_info = params.get("clientInfo") or {}
                 server.service.record_mcp_session(
                     session_id=new_sid,
@@ -128,27 +125,26 @@ def create_mcp_http_app(server: "MCPServer"):  # -> FastAPI
             except Exception as exc:
                 print(f"[mcp_http] record_mcp_session failed: {exc}", file=sys.stderr)
             response_headers["Mcp-Session-Id"] = new_sid
-            result = server.handle_request(rpc, session_state=state)
         else:
             sid_header = request.headers.get("mcp-session-id")
             if not sid_header:
+                rpc_id = rpc.get("id") if isinstance(rpc, dict) else None
                 return JSONResponse(
                     status_code=400,
-                    content={"error": "Missing Mcp-Session-Id header"},
+                    content={"jsonrpc": "2.0", "id": rpc_id,
+                             "error": {"code": -32600, "message": "Missing Mcp-Session-Id header"}},
                 )
             state = registry.get(sid_header)
             if state is None:
+                rpc_id = rpc.get("id") if isinstance(rpc, dict) else None
                 return JSONResponse(
                     status_code=400,
-                    content={"error": f"Unknown session: {sid_header}"},
+                    content={"jsonrpc": "2.0", "id": rpc_id,
+                             "error": {"code": -32600, "message": f"Unknown session: {sid_header}"}},
                 )
             result = server.handle_request(rpc, session_state=state)
 
         return JSONResponse(content=result, headers=response_headers)
-
-    # Inject the real Request type as annotation so FastAPI's dependency
-    # injection recognises it as the raw request object (not a query param).
-    _post_mcp.__annotations__["request"] = _Request
 
     app.post("/mcp")(_post_mcp)
 

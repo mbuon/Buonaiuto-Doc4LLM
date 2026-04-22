@@ -213,6 +213,48 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--dashboard-port", type=int, default=8420, help="Dashboard port (default: 8420)",
     )
+    serve.add_argument(
+        "--http",
+        action="store_true",
+        help="Also start MCP HTTP transport (Streamable HTTP for Claude Desktop / claude.ai)",
+    )
+    serve.add_argument(
+        "--http-host", default="127.0.0.1",
+        help="Bind address for MCP HTTP transport (default: 127.0.0.1)",
+    )
+    serve.add_argument(
+        "--http-port", type=int, default=8421,
+        help="Port for MCP HTTP transport (default: 8421)",
+    )
+
+    serve_http = subparsers.add_parser(
+        "serve-http",
+        help="Start MCP HTTP transport only (no stdio) — for Claude Desktop / claude.ai",
+    )
+    serve_http.add_argument(
+        "--host", default="127.0.0.1",
+        help="Bind address (default: 127.0.0.1)",
+    )
+    serve_http.add_argument(
+        "--port", type=int, default=8421,
+        help="Port (default: 8421)",
+    )
+    serve_http.add_argument(
+        "--embeddings",
+        action="store_true",
+        help="Enable offline semantic search (sentence-transformers + in-memory Qdrant).",
+    )
+    serve_http.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Also start the web dashboard in a background thread",
+    )
+    serve_http.add_argument(
+        "--dashboard-host", default="127.0.0.1",
+    )
+    serve_http.add_argument(
+        "--dashboard-port", type=int, default=8420,
+    )
 
     schedule = subparsers.add_parser(
         "schedule",
@@ -330,7 +372,21 @@ def main() -> None:
             server.service.scan()
         if args.dashboard:
             _start_dashboard_thread(args.base_dir, args.dashboard_host, args.dashboard_port)
+        if args.http:
+            _start_mcp_http_thread(server, args.http_host, args.http_port)
         server.serve()
+        return
+    if args.command == "serve-http":
+        import uvicorn
+        from buonaiuto_doc4llm.mcp_http_transport import create_mcp_http_app
+
+        server = MCPServer(args.base_dir)
+        server.service.scan()
+        if args.dashboard:
+            _start_dashboard_thread(args.base_dir, args.dashboard_host, args.dashboard_port)
+        app = create_mcp_http_app(server)
+        print(f"Buonaiuto Doc4LLM MCP HTTP: http://{args.host}:{args.port}/mcp")
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return
     if args.command == "schedule":
         _run_schedule(args)
@@ -432,6 +488,22 @@ def _start_dashboard_thread(base_dir: str, host: str, port: int) -> None:
     t.start()
     import sys
     print(f"Buonaiuto Doc4LLM dashboard: http://{host}:{port}", file=sys.stderr)
+
+
+def _start_mcp_http_thread(server: MCPServer, host: str, port: int) -> None:
+    """Start the MCP HTTP transport in a background daemon thread."""
+    import sys
+    import uvicorn
+    from buonaiuto_doc4llm.mcp_http_transport import create_mcp_http_app
+
+    app = create_mcp_http_app(server)
+
+    def _run() -> None:
+        uvicorn.run(app, host=host, port=port, log_level="warning")
+
+    t = threading.Thread(target=_run, daemon=True, name="mcp-http")
+    t.start()
+    print(f"Buonaiuto Doc4LLM MCP HTTP: http://{host}:{port}/mcp", file=sys.stderr)
 
 
 def _run_dashboard(args: argparse.Namespace) -> None:

@@ -41,6 +41,17 @@ Or just open this folder in Claude Code — it reads `.mcp.json` automatically.
 **Codex / other MCP clients** — point them at `.mcp.json` in this repo root,
 or copy the `mcpServers` block into their config file.
 
+**HTTP transport (Claude Desktop / claude.ai)** — start the server first:
+
+```bash
+PYTHONPATH=src python3 -m buonaiuto_doc4llm --base-dir /Users/massimo/Projects_Massimo/Documentation_LLMs serve-http
+```
+
+Then configure Claude Desktop with:
+```json
+{ "mcpServers": { "buonaiuto-doc4llm": { "url": "http://127.0.0.1:8421/mcp" } } }
+```
+
 **Key rule:** `--base-dir` must always come *before* the `serve` subcommand.
 
 ---
@@ -70,6 +81,13 @@ PYTHONPATH=src python3 -m buonaiuto_doc4llm watch
 
 # Start the MCP stdio server (--base-dir must come before the subcommand)
 PYTHONPATH=src python3 -m buonaiuto_doc4llm --base-dir /Users/massimo/Projects_Massimo/Documentation_LLMs serve
+
+# Start MCP HTTP transport (for Claude Desktop / claude.ai — connects by URL)
+PYTHONPATH=src python3 -m buonaiuto_doc4llm --base-dir /Users/massimo/Projects_Massimo/Documentation_LLMs serve-http
+
+# Start all transports + dashboard in one process
+PYTHONPATH=src python3 -m buonaiuto_doc4llm --base-dir /Users/massimo/Projects_Massimo/Documentation_LLMs serve \
+  --http --http-port 8421 --dashboard
 
 # Or from any directory using the default (cwd):
 PYTHONPATH=src python3 -m buonaiuto_doc4llm serve

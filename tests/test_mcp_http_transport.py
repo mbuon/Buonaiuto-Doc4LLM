@@ -1,7 +1,8 @@
 from __future__ import annotations
 import threading
 from pathlib import Path
-from buonaiuto_doc4llm.mcp_http_transport import SessionRegistry, SessionState
+from fastapi.testclient import TestClient
+from buonaiuto_doc4llm.mcp_http_transport import SessionRegistry, SessionState, create_mcp_http_app
 from buonaiuto_doc4llm.mcp_server import MCPServer
 
 
@@ -86,3 +87,83 @@ def test_handle_request_without_session_state_still_works(tmp_path: Path):
         {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
     )
     assert "result" in response
+
+
+def test_get_mcp_returns_server_info(tmp_path: Path):
+    server = MCPServer(tmp_path)
+    app = create_mcp_http_app(server)
+    client = TestClient(app)
+    resp = client.get("/mcp")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["name"] == "Buonaiuto Doc4LLM"
+    assert "version" in data
+
+
+def test_initialize_returns_session_header(tmp_path: Path):
+    server = MCPServer(tmp_path)
+    app = create_mcp_http_app(server)
+    client = TestClient(app)
+    resp = client.post("/mcp", json={
+        "jsonrpc": "2.0", "id": 1,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-03-26", "clientInfo": {"name": "test", "version": "0.1"}},
+    })
+    assert resp.status_code == 200
+    assert "mcp-session-id" in resp.headers
+    data = resp.json()
+    assert data["result"]["protocolVersion"] == "2025-03-26"
+
+
+def test_tools_list_requires_session_header(tmp_path: Path):
+    server = MCPServer(tmp_path)
+    app = create_mcp_http_app(server)
+    client = TestClient(app)
+    resp = client.post("/mcp", json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {},
+    })
+    assert resp.status_code == 400
+
+
+def test_tools_list_with_valid_session(tmp_path: Path):
+    server = MCPServer(tmp_path)
+    app = create_mcp_http_app(server)
+    client = TestClient(app)
+
+    init_resp = client.post("/mcp", json={
+        "jsonrpc": "2.0", "id": 1,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-03-26", "clientInfo": {"name": "test", "version": "0.1"}},
+    })
+    session_id = init_resp.headers["mcp-session-id"]
+
+    resp = client.post("/mcp",
+        json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        headers={"Mcp-Session-Id": session_id},
+    )
+    assert resp.status_code == 200
+    tools = resp.json()["result"]["tools"]
+    assert any(t["name"] == "search_documentation" for t in tools)
+
+
+def test_unknown_session_id_returns_400(tmp_path: Path):
+    server = MCPServer(tmp_path)
+    app = create_mcp_http_app(server)
+    client = TestClient(app)
+    resp = client.post("/mcp",
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        headers={"Mcp-Session-Id": "00000000-0000-0000-0000-000000000000"},
+    )
+    assert resp.status_code == 400
+
+
+def test_oversized_body_rejected(tmp_path: Path):
+    server = MCPServer(tmp_path)
+    app = create_mcp_http_app(server)
+    client = TestClient(app)
+    big = "x" * (17 * 1024 * 1024)
+    resp = client.post("/mcp",
+        content=big,
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 413

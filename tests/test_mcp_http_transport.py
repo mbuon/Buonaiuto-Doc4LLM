@@ -43,3 +43,21 @@ def test_thread_safe_allocation():
 
     assert len(results) == 50
     assert len({s.session_id for s in results}) == 50
+
+
+def test_update_project_sets_project_id():
+    reg = SessionRegistry()
+    reg.allocate(session_id="s1", project_id=None)
+    reg.update_project("s1", "proj-x")
+    state = reg.get("s1")
+    assert state is not None
+    assert state.project_id == "proj-x"
+
+
+def test_update_project_does_not_overwrite_existing():
+    reg = SessionRegistry()
+    reg.allocate(session_id="s2", project_id="existing")
+    reg.update_project("s2", "new-value")
+    state = reg.get("s2")
+    assert state is not None
+    assert state.project_id == "existing"

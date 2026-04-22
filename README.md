@@ -246,17 +246,17 @@ Two transport modes are available:
 
 | Transport | How it works | Best for |
 |---|---|---|
-| **stdio** (default) | Client launches the server as a subprocess | Claude Code, Cursor, Windsurf, Zed |
-| **HTTP** (new) | Server runs independently; client connects by URL | Claude Desktop, claude.ai web |
+| **stdio** (default) | Client launches the server as a subprocess | Claude Code, Claude Desktop, Cursor, Windsurf, Zed |
+| **HTTP** | Server runs independently; client connects by URL | claude.ai web (when URL-based MCP is supported) |
 
-To use HTTP transport, start the server first with option 5 or 6 in `run.sh` / `run.bat`, or:
+For Claude Desktop, use **stdio** with the shell script wrapper (`bin/doc4llm-mcp`) — see the Claude Desktop section below.
+
+To run the HTTP transport for URL-based clients:
 
 ```bash
 PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve-http
 # MCP HTTP listening at http://127.0.0.1:8421/mcp
 ```
-
-Then configure your client with the URL (see Claude Desktop below).
 
 ---
 
@@ -293,23 +293,26 @@ claude mcp add --scope user buonaiuto-doc4llm \
 
 #### Claude Desktop
 
-**Option A — HTTP transport (recommended, no subprocess):**
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or
+`%APPDATA%\Claude\claude_desktop_config.json` (Windows).
 
-Start the server first (`run.sh` option 5), then edit
-`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or
-`%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+**Option A — shell script wrapper (recommended):**
+
+The repo ships `bin/doc4llm-mcp`, a thin shell script that sets `PYTHONPATH` and launches the server. Use it to avoid embedding a Python path directly in the config:
 
 ```json
 {
   "mcpServers": {
     "buonaiuto-doc4llm": {
-      "url": "http://127.0.0.1:8421/mcp"
+      "command": "/path/to/Buonaiuto-Doc4LLM/bin/doc4llm-mcp"
     }
   }
 }
 ```
 
-**Option B — stdio (subprocess launch):**
+Make sure the script is executable: `chmod +x bin/doc4llm-mcp`
+
+**Option B — direct Python path:**
 
 ```json
 {

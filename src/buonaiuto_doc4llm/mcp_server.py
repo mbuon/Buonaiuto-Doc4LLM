@@ -88,8 +88,9 @@ class MCPServer:
                     "resources": {},
                     "prompts": {},
                 },
-                "bootstrap": bootstrap_summary,
             }
+            if bootstrap_summary is not None:
+                result["bootstrap"] = bootstrap_summary
         elif method == "ping":
             result = {}
         elif method == "tools/list":

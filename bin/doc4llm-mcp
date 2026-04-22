@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+export PYTHONPATH="/Users/massimo/Projects_Massimo/Documentation_LLMs/src"
+exec /opt/anaconda3/bin/python -m buonaiuto_doc4llm \
+  --base-dir /Users/massimo/Projects_Massimo/Documentation_LLMs \
+  serve

@@ -72,7 +72,7 @@ class MCPServer:
             sys.stdout.write(json.dumps(response) + "\n")
             sys.stdout.flush()
 
-    def handle_request(self, request: dict[str, Any]) -> dict[str, Any]:
+    def handle_request(self, request: dict[str, Any], session_state: Any = None) -> dict[str, Any]:
         method = request.get("method")
         params = request.get("params", {})
         request_id = request.get("id")
@@ -96,7 +96,11 @@ class MCPServer:
             result = {"tools": self._list_tools()}
         elif method == "tools/call":
             try:
-                result = self._call_tool(params["name"], params.get("arguments", {}))
+                result = self._call_tool(
+                    params["name"],
+                    params.get("arguments", {}),
+                    session_state=session_state,
+                )
             except Exception as exc:
                 return {
                     "jsonrpc": "2.0",
@@ -531,12 +535,16 @@ class MCPServer:
             },
         ]
 
-    def _call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _call_tool(self, name: str, arguments: dict[str, Any], session_state: Any = None) -> dict[str, Any]:
         started = time.monotonic()
         # Snapshot session identity at the start so a concurrent initialize
         # can't swap it mid-call and misattribute the log row.
-        session_id = self._session_id
-        session_project_id = self._session_project_id
+        if session_state is not None:
+            session_id = session_state.session_id
+            session_project_id = session_state.project_id
+        else:
+            session_id = self._session_id
+            session_project_id = self._session_project_id
         error_msg: str | None = None
         result_chars: int | None = None
         try:

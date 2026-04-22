@@ -1,6 +1,8 @@
 from __future__ import annotations
 import threading
+from pathlib import Path
 from buonaiuto_doc4llm.mcp_http_transport import SessionRegistry, SessionState
+from buonaiuto_doc4llm.mcp_server import MCPServer
 
 
 def test_allocate_returns_session_state():
@@ -61,3 +63,26 @@ def test_update_project_does_not_overwrite_existing():
     state = reg.get("s2")
     assert state is not None
     assert state.project_id == "existing"
+
+
+def test_handle_request_uses_session_state_for_tool_logging(tmp_path: Path):
+    server = MCPServer(tmp_path)
+    server.service.scan()
+    state = SessionState(session_id="http-session-1", project_id=None)
+
+    response = server.handle_request(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        session_state=state,
+    )
+    assert "result" in response
+    assert "tools" in response["result"]
+
+
+def test_handle_request_without_session_state_still_works(tmp_path: Path):
+    server = MCPServer(tmp_path)
+    server.service.scan()
+
+    response = server.handle_request(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+    )
+    assert "result" in response

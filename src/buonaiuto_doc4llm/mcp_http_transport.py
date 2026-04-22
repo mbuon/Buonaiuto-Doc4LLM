@@ -144,6 +144,10 @@ def create_mcp_http_app(server: "MCPServer"):  # -> FastAPI
                 )
             result = server.handle_request(rpc, session_state=state)
 
+        # Notifications return {} — no body, HTTP 202.
+        if not result:
+            from fastapi.responses import Response
+            return Response(status_code=202, headers=response_headers)
         return JSONResponse(content=result, headers=response_headers)
 
     app.post("/mcp")(_post_mcp)

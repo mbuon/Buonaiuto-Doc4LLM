@@ -69,8 +69,10 @@ class MCPServer:
                         "data": traceback.format_exc(),
                     },
                 }
-            sys.stdout.write(json.dumps(response) + "\n")
-            sys.stdout.flush()
+            # Notifications return {} — no response goes to the client.
+            if response:
+                sys.stdout.write(json.dumps(response) + "\n")
+                sys.stdout.flush()
 
     def handle_request(self, request: dict[str, Any], session_state: Any = None) -> dict[str, Any]:
         method = request.get("method")
@@ -164,8 +166,17 @@ class MCPServer:
                     }
                 ],
             }
+        elif method is not None and (
+            method.startswith("notifications/") or method.startswith("$/")
+        ):
+            # MCP notifications are fire-and-forget — no response expected or allowed.
+            return {}
         else:
-            raise ValueError(f"Unsupported method: {method}")
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {"code": -32601, "message": f"Method not found: {method}"},
+            }
 
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
 

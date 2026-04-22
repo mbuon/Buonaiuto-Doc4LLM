@@ -36,15 +36,18 @@ def extract_workspace_path(params: dict[str, Any]) -> Path | None:
     if isinstance(direct, str) and direct.strip():
         return Path(direct.strip())
 
-    folders = params.get("workspaceFolders")
-    if isinstance(folders, list):
-        for folder in folders:
-            if isinstance(folder, dict):
-                uri = folder.get("uri")
-                if isinstance(uri, str):
-                    p = _path_from_uri(uri)
-                    if p is not None:
-                        return p
+    # Claude Code sends `roots` (MCP 2025-03-26 spec); other clients use
+    # `workspaceFolders`. Both are lists of {"uri": "file://..."} objects.
+    for key in ("roots", "workspaceFolders"):
+        folders = params.get(key)
+        if isinstance(folders, list):
+            for folder in folders:
+                if isinstance(folder, dict):
+                    uri = folder.get("uri")
+                    if isinstance(uri, str):
+                        p = _path_from_uri(uri)
+                        if p is not None:
+                            return p
 
     root_uri = params.get("rootUri")
     if isinstance(root_uri, str):

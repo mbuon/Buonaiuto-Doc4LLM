@@ -63,7 +63,7 @@ There are two layers:
 
 | Layer | Technology |
 |---|---|
-| MCP server | Python 3.11+, JSON-RPC 2.0 over stdio (protocol `2025-03-26`) |
+| MCP server | Python 3.11+, JSON-RPC 2.0 over stdio and Streamable HTTP (protocol `2025-03-26`) |
 | Storage | SQLite (WAL mode) via `sqlite3` stdlib |
 | Vector search | [Qdrant](https://qdrant.tech/) (optional, local) + sentence-transformers or Ollama embeddings |
 | Lexical search | BM25 with TF-IDF scoring and sqrt length normalization |
@@ -242,6 +242,22 @@ This downloads docs into `docs_center/technologies/` and indexes them into `stat
 
 ### 3. Connect your AI tool
 
+Two transport modes are available:
+
+| Transport | How it works | Best for |
+|---|---|---|
+| **stdio** (default) | Client launches the server as a subprocess | Claude Code, Cursor, Windsurf, Zed |
+| **HTTP** (new) | Server runs independently; client connects by URL | Claude Desktop, claude.ai web |
+
+To use HTTP transport, start the server first with option 5 or 6 in `run.sh` / `run.bat`, or:
+
+```bash
+PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve-http
+# MCP HTTP listening at http://127.0.0.1:8421/mcp
+```
+
+Then configure your client with the URL (see Claude Desktop below).
+
 ---
 
 #### Claude Code
@@ -277,7 +293,23 @@ claude mcp add --scope user buonaiuto-doc4llm \
 
 #### Claude Desktop
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+**Option A — HTTP transport (recommended, no subprocess):**
+
+Start the server first (`run.sh` option 5), then edit
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or
+`%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "buonaiuto-doc4llm": {
+      "url": "http://127.0.0.1:8421/mcp"
+    }
+  }
+}
+```
+
+**Option B — stdio (subprocess launch):**
 
 ```json
 {
@@ -477,10 +509,12 @@ Both prompt for one of four options:
 
 | Option | Command it runs | When to use |
 |---|---|---|
-| 1 | `serve` | MCP stdio server only (for LLM clients like Claude Code / Cursor — **no website**) |
+| 1 | `serve` | MCP stdio server only (Claude Code / Cursor / Windsurf — subprocess) |
 | 2 | `serve --dashboard` | MCP stdio server **and** web dashboard at http://127.0.0.1:8420 |
-| 3 | `dashboard` | Web dashboard only at http://127.0.0.1:8420 (no MCP stdio) |
+| 3 | `dashboard` | Web dashboard only at http://127.0.0.1:8420 (no MCP) |
 | 4 | `watch` | Watch `docs_center/` for changes and auto re-scan |
+| 5 | `serve-http` | MCP HTTP server only — Claude Desktop / claude.ai connect via http://127.0.0.1:8421/mcp |
+| 6 | `serve --http --dashboard` | MCP stdio + MCP HTTP + dashboard all in one process |
 
 Override the Python interpreter with the `PYTHON_BIN` environment variable if needed (defaults to `/opt/anaconda3/bin/python` on macOS, system `python` / `py` on Windows).
 
@@ -537,12 +571,22 @@ PYTHONPATH=src python -m buonaiuto_doc4llm dashboard
 PYTHONPATH=src python -m buonaiuto_doc4llm dashboard --port 9000
 PYTHONPATH=src python -m buonaiuto_doc4llm dashboard --host 0.0.0.0
 
-# Start the MCP server
+# Start the MCP stdio server
 PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve
 
-# Start the MCP server + dashboard together (dashboard at http://127.0.0.1:8420)
+# Start the MCP stdio server + dashboard together (dashboard at http://127.0.0.1:8420)
 PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve --dashboard
 PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve --dashboard --dashboard-port 9000
+
+# Start MCP HTTP server only (Claude Desktop / claude.ai — connects by URL)
+PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve-http
+PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve-http --port 9000
+PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve-http --host 0.0.0.0 --port 8421
+
+# Start MCP stdio + HTTP + dashboard together (all transports in one process)
+PYTHONPATH=src python -m buonaiuto_doc4llm --base-dir . serve \
+  --http --http-port 8421 \
+  --dashboard --dashboard-port 8420
 ```
 
 ---
@@ -852,7 +896,7 @@ No database mocking — tests use real SQLite instances via `tmp_path`.
 |---|---|
 | SQLite | PostgreSQL / Supabase |
 | Qdrant dense-only search | Qdrant dense + BM25 sparse RRF hybrid + cross-encoder reranking ✓ |
-| stdio MCP | Streamable HTTP MCP transport |
+| ~~stdio MCP only~~ | Streamable HTTP MCP transport ✓ |
 | Local fetch schedule | Ingestion worker with source trust scoring |
 | Project JSON files | Workspace subscriptions with API key auth |
 | Python CLI | Full SaaS control plane |
